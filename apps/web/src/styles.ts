@@ -5,6 +5,7 @@ const spin = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
 const equalize = stylex.keyframes({ "50%": { transform: "scaleY(.4)" } });
 
 export const styles = stylex.create({
+  installFallback: { padding: 24 },
   installDetails: { marginTop: 24, fontSize: 14 },
   installSummary: { cursor: "pointer", width: "fit-content" },
   installBody: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 12, paddingTop: 16 },

@@ -1,3 +1,5 @@
+import { Suspense } from "solid-js";
+import { InstallServer } from "./components/InstallServer";
 import { render } from "solid-js/web";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import {
@@ -18,7 +20,16 @@ const rootRoute = createRootRoute();
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: ListeningRoom,
+  component: () => (
+    <Suspense fallback={
+      <main {...stylex.attrs(styles.base, styles.installFallback)}>
+        <p {...stylex.attrs(styles.base, styles.textReset)} role="status">Connecting to your song server…</p>
+        <InstallServer />
+      </main>
+    }>
+      <ListeningRoom />
+    </Suspense>
+  ),
 });
 const router = createRouter({
   routeTree: rootRoute.addChildren([indexRoute]),
