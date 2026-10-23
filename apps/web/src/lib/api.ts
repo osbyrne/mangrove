@@ -3,6 +3,15 @@ import { HealthSchema, TracksSchema } from '@mangrove/shared'
 
 export type { Track } from '@mangrove/shared'
 
+const configuredOrigin = import.meta.env.VITE_API_ORIGIN?.trim()
+const apiOrigin = configuredOrigin ? new URL(configuredOrigin) : undefined
+if (apiOrigin && (apiOrigin.protocol !== 'https:' || apiOrigin.username || apiOrigin.password
+  || apiOrigin.pathname !== '/' || apiOrigin.search || apiOrigin.hash)) {
+  throw new Error('VITE_API_ORIGIN must be an HTTPS origin')
+}
+const apiBase = apiOrigin?.origin ?? window.location.origin
+const apiUrl = (path: string) => new URL(path, apiBase).href
+
 class ApiError extends Error {
   constructor(message: string) {
     super(message)
@@ -13,7 +22,7 @@ class ApiError extends Error {
 function fetchJson(path: string, signal?: AbortSignal) {
   return Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
-      try: () => fetch(path, { signal, headers: { Accept: 'application/json' } }),
+      try: () => fetch(apiUrl(path), { signal, headers: { Accept: 'application/json' } }),
       catch: () => new ApiError('We couldn’t reach your collection. Check your connection and try again.'),
     })
     if (!response.ok) {
@@ -41,16 +50,16 @@ function tracksProgram(signal?: AbortSignal) {
       try: () => {
         const ids = new Set<string>()
         for (const track of payload.tracks) {
-          const stream = new URL(track.streamUrl, window.location.origin)
+          const stream = new URL(track.streamUrl, apiBase)
           const validDate = /^\d{4}-\d{2}-\d{2}$/.test(track.recordedAt)
             && Number.isFinite(Date.parse(`${track.recordedAt}T12:00:00Z`))
-          if (stream.origin !== window.location.origin || !/^https?:$/.test(stream.protocol)
+          if (stream.origin !== apiBase || !/^https?:$/.test(stream.protocol)
             || !validDate || ids.has(track.id) || !track.contentType.startsWith('audio/')) {
             throw new Error('Invalid track')
           }
           ids.add(track.id)
         }
-        return payload
+        return { tracks: payload.tracks.map(track => ({ ...track, streamUrl: apiUrl(track.streamUrl) })) }
       },
       catch: () => new ApiError('Some recording details could not be verified. Please try again.'),
     })
@@ -73,3 +82,13 @@ export const getHealth = (signal?: AbortSignal) => runApi(Effect.gen(function* (
     Effect.mapError(() => new ApiError('The connection to your collection could not be verified.')),
   )
 }))
+
+
+export async function uploadSong(file: File, signal?: AbortSignal) {
+  const response = await fetch(apiUrl(`/api/tracks?filename=${encodeURIComponent(file.name)}`), {
+    method: 'POST', body: file, signal,
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+  })
+  const payload = await response.json() as { error?: string }
+  if (!response.ok) throw new ApiError(payload.error ?? 'Upload failed. Please try again.')
+}

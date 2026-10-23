@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@mangrove/shared": "workspace:*",
+    "@stylexjs/stylex": "0.19.1",
     "@tanstack/solid-query": "5.104.5",
     "@tanstack/solid-router": "1.170.42",
     "effect": "4.0.0-beta.107",
@@ -17,8 +18,11 @@
     "solid-js": "1.9.17"
   },
   "devDependencies": {
+    "@stylexjs/unplugin": "0.19.1",
     "@types/node": "^25.0.0",
+    "lightningcss": "^1.33.0",
     "typescript": "^6.0.0",
+    "unplugin": "^3.4.0",
     "vite": "8.3.5",
     "vite-plugin-solid": "^2.11.12"
   }

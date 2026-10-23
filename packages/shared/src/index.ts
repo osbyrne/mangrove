@@ -6,6 +6,7 @@ export const TrackSchema = Schema.Struct({
   title: Schema.NonEmptyString,
   artist: Schema.NonEmptyString,
   recordedAt: Schema.NonEmptyString,
+  uploadedAt: Schema.optional(Schema.NonEmptyString),
   filename: Schema.NonEmptyString,
   contentType: Schema.NonEmptyString,
   streamUrl: Schema.NonEmptyString,
