@@ -1,60 +1,86 @@
-# Remote connection
+# Mangrove on air
 
-The local player already uses the intended connection shape: browser → one HTTP origin → Bun → private S3 → rclone crypt → encrypted local objects. No storage URL, signature, or key is sent to the browser. For remote access the same origin sits behind Cloudflare Tunnel, with the entire server isolated behind a VPN as described in [the home server article](https://nullchinchilla.substack.com/p/undoxxable-home-server).
+## Access
 
-## Prepare the host
+Connect your device to the same Tailscale network, then open **http://air:3000**. If MagicDNS is unavailable, use **http://100.86.196.40:3000** or **http://air.tailca045f.ts.net:3000**. The server serves both the built frontend and `/api` on this origin. Tailscale encrypts network traffic even though this private URL uses HTTP.
 
-Use a dedicated Linux VM/container whose **only external network route** passes through the host's WireGuard VPN. Enforce this in the host firewall, including IPv6 and DNS: allow forwarding from the guest network to the VPN interface and established replies back; deny guest forwarding to physical/WAN interfaces. Keep loopback available inside the guest. The host firewall must keep this deny policy when the VPN interface disappears. Never add a public port forward for 3000, 5173, or 9091.
+Click **Upload songs** and select one or more MP3, M4A, FLAC, WAV, OGG, or Opus files. Uploads run sequentially, with a 250 MiB limit per song and at most two concurrent uploads per server. A song appears after its S3 write and catalog insert succeed. Titles come from filenames; the displayed date is the upload date. Playback support depends on the browser's codecs. There is currently no delete/edit UI or embedded-tag extraction.
 
-These rules depend on your VM bridge, VPN interface, firewall manager, and IPv6 configuration, so this project does not alter the laptop's routes or firewall. The article's IPv4 iptables example is a starting point, not a complete host configuration. Verify from inside the guest that both address families and DNS use the VPN. Disconnect the VPN and verify that outbound access fails before exposing the app. Cloudflare should see the VPN exit address. A tunnel alone does not provide this property.
-
-Install Bun, rclone, and cloudflared in the guest. Copy the project, run `bun install --frozen-lockfile`, and import the song. Or migrate the entire `.data` directory privately, preserving `.data/rclone.conf` and its encrypted objects together. The launch scripts resolve the local objects path relative to the project, so the vault can move with the project. Keep `.data` private and back it up securely; rclone's password obscuring is reversible.
-
-## Configure Cloudflare
-
-You need a domain on your Cloudflare account. On the isolated server:
+To run the frontend on your laptop against air instead:
 
 ```sh
-cloudflared tunnel login
-cloudflared tunnel create mangrove
-cloudflared tunnel route dns mangrove music.your-domain.example
-cp deploy/cloudflared.example.yml .data/cloudflared.yml
-chmod 600 .data/cloudflared.yml
+bun install --frozen-lockfile
+MANGROVE_API_URL=http://air:3000 bun dev
 ```
 
-Replace the tunnel UUID, credentials-file path, and hostname in `.data/cloudflared.yml` using the values cloudflared created. Never commit credentials. This follows the [official locally managed tunnel configuration](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/configuration-file/). If you change `PORT`, change the origin port in the tunnel config too.
+Open **http://127.0.0.1:5173**. This mode starts only Vite; its server-side `/api` proxy sends catalog, uploads, and range streams to air. No local S3 instance or local song import is needed. The browser continues to use same-origin `/api` URLs, so no browser CORS configuration or S3 credentials are needed. Keep Tailscale connected on the laptop. `MANGROVE_API_URL` configures the development proxy, not a separately hosted static production frontend.
+
+## Deployment
+
+For a release binary, use [releases.md](releases.md) and the included binary systemd unit; the source-based deployment below remains supported.
+
+The checked-out repository is `/srv/mangrove`, cloned on air with `gh repo clone osbyrne/mangrove /srv/mangrove`. The current deployment overlays the laptop's working files onto that clone, including uncommitted frontend changes; no GitHub push was made. `/root/code/mangrove` is an additional clean clone, not the running deployment.
+
+Install `gh`, rclone, and Bun on a Tailscale-connected Linux host. Authenticate `gh` and confirm `tailscale ip -4`. Then, as root:
 
 ```sh
-cloudflared tunnel --config .data/cloudflared.yml ingress validate
-bun run build
-bun start
-# In a second terminal, in the same VPN-only guest:
-bun run tunnel
+gh repo clone osbyrne/mangrove /srv/mangrove
+useradd --system --home-dir /srv/mangrove --shell /usr/sbin/nologin mangrove
+install -d /srv/mangrove/.runtime
+# Copy an installed Linux Bun executable; the service uses this private runtime.
+install -m 755 /path/to/bun /srv/mangrove/.runtime/bun
+# TypeScript CLI shebangs call node; let the private Bun runtime handle them.
+ln -s bun /srv/mangrove/.runtime/node
+install -d -o mangrove -g mangrove -m 700 /srv/mangrove/.data
+chown -R mangrove:mangrove /srv/mangrove
+# On SELinux hosts such as Fedora, allow the private runtime to execute.
+semanage fcontext -a -t bin_t '/srv/mangrove/\.runtime(/.*)?'
+restorecon -Rv /srv/mangrove/.runtime
+cd /srv/mangrove
+runuser -u mangrove -- env PATH=/srv/mangrove/.runtime:/usr/bin:/usr/sbin bun install --frozen-lockfile
+runuser -u mangrove -- env PATH=/srv/mangrove/.runtime:/usr/bin:/usr/sbin bun run check
+runuser -u mangrove -- env PATH=/srv/mangrove/.runtime:/usr/bin:/usr/sbin bun test
+runuser -u mangrove -- env PATH=/srv/mangrove/.runtime:/usr/bin:/usr/sbin bun run build
+install -m 644 deploy/mangrove.service /etc/systemd/system/mangrove.service
+install -m 600 deploy/air.env.example /etc/mangrove.env
+# Set HOST in /etc/mangrove.env to this host's `tailscale ip -4`.
+systemctl daemon-reload
+systemctl enable --now mangrove
 ```
 
-Only the production Bun origin is exposed. The Vite development server and S3 service stay private. No Cloudflare account or host VPN is configured automatically by this repository. The app itself has no listener authentication: put the hostname behind Cloudflare Access if only you should be able to listen. The word “private” in the UI describes the local collection, not an access-control guarantee for an exposed hostname.
+Use the current working snapshot or a Git revision containing this implementation before building. A fresh vault starts empty; use Upload songs to populate it. No AWS account, cloud storage, or tunnel is involved. The TypeScript S3 client speaks to rclone on this same server.
 
-## Streaming and cache rules
-
-Following [the storage article](https://nullchinchilla.substack.com/p/using-s3-style-object-storage-on-my-undoxxable-home-server), configure a Cloudflare Cache Rule with **Cache eligibility: Bypass cache** for `/api/` paths, particularly requests with a `Range` header. A simple rule covering all API traffic is:
-
-```text
-starts_with(http.request.uri.path, "/api/")
-```
-
-The API also sends `Cache-Control: no-store` for audio. It preserves byte ranges and content lengths through the tunnel; the browser seeks by requesting only the needed portion. Static fingerprinted frontend assets may be cached. The project exposes no rclone directory listings, so the article's listing Last-Modified workaround is unnecessary.
-
-Verify on the public hostname, using Cloudflare Access authentication if enabled:
+The systemd service runs as `mangrove`, starts at boot, and restarts on failure. `/etc/mangrove.env` binds the app to `100.86.196.40:3000`; the launcher refuses public/all-interface bindings. S3 stays at `127.0.0.1:9091`. Existing Tailscale Serve configuration is unchanged. Devices allowed to reach air:3000 by tailnet policy can listen and upload; there is no additional app login. Limit that port with Tailscale grants/ACLs if needed. No public firewall opening or port forward is required. Fedora's firewall on air needed this narrowly scoped rule (runtime and permanent); use your active zone and tailnet IP on another host:
 
 ```sh
-curl -I https://music.your-domain.example/api/tracks/red-white-beige/stream
-curl -i -H 'Range: bytes=100000-100099' https://music.your-domain.example/api/tracks/red-white-beige/stream
+firewall-cmd --zone=FedoraServer --add-rich-rule='rule family="ipv4" source address="100.64.0.0/10" destination address="100.86.196.40" port port="3000" protocol="tcp" accept'
+firewall-cmd --permanent --zone=FedoraServer --add-rich-rule='rule family="ipv4" source address="100.64.0.0/10" destination address="100.86.196.40" port port="3000" protocol="tcp" accept'
 ```
 
-Expect HTTP 200 for HEAD, and HTTP 206 with `Content-Range: bytes 100000-100099/5966902` and a 100-byte body for the range. Play and seek in the browser too. Repeat the VPN-disconnect test after deployment: the public endpoint must become unreachable without revealing the home address. The privacy properties depend on the VPN, host routing, accounts, and operational setup; they cannot be established by frontend code.
+## Updates and operations
 
-## Storage choices
+For the current uncommitted working snapshot, run from the laptop repository:
 
-The current fully local adapter is `rclone serve s3 vault:` over a crypt-wrapped local directory, with generated Signature V4 credentials and a read-only S3 listener on loopback. This uses a real S3 protocol while requiring neither Docker nor a cloud account. rclone labels its S3 server experimental; use a dedicated S3 implementation if you later need a general multi-user object store. The imported file is encrypted at rest; the read-only serving path does not create a decrypted VFS disk cache.
+```sh
+rsync -az --delete --exclude='.git/' --exclude='.data/' --exclude='.runtime/' \
+  --exclude='.bun/' --exclude='.cache/' --exclude='node_modules/' --exclude='dist/' --exclude='.env' --exclude='.DS_Store' \
+  ./ root@air:/srv/mangrove/
+ssh root@air 'chown -R mangrove:mangrove /srv/mangrove; cd /srv/mangrove; runuser -u mangrove -- env PATH=/srv/mangrove/.runtime:/usr/bin:/usr/sbin bun install --frozen-lockfile && runuser -u mangrove -- env PATH=/srv/mangrove/.runtime:/usr/bin:/usr/sbin bun run build && systemctl restart mangrove'
+```
 
-The article uses a crypt remote over an external S3 bucket and an HTTP serving layer. This project substitutes encrypted local storage and a private S3 serving layer, retaining server-side decryption and same-origin browser access. To move ciphertext to off-site S3 later, configure a separate rclone S3 remote and make `vault.remote` point to that bucket prefix, preserving its crypt keys and encrypted directory structure. Do not give browsers direct bucket URLs. See the [rclone crypt documentation](https://rclone.org/crypt/) and [S3 server documentation](https://rclone.org/commands/rclone_serve_s3/).
+Once the changes are committed and pushed, a clean deployment checkout can use `git pull --ff-only` instead of rsync. Do not reset the current snapshot or remove `.data` to update it.
+
+```sh
+ssh root@air 'systemctl status mangrove --no-pager'
+ssh root@air 'journalctl -u mangrove -n 50 --no-pager'
+curl --fail http://air:3000/api/health
+curl --fail http://air:3000/api/tracks
+curl -I http://air:3000/api/tracks/SONG_ID/stream
+curl -H 'Range: bytes=0-99' http://air:3000/api/tracks/SONG_ID/stream
+```
+
+Back up the **entire `/srv/mangrove/.data` directory together**, with the service stopped for a consistent SQLite snapshot. It contains encrypted objects, their indispensable crypt keys, local S3 credentials, and the SQLite catalog (including WAL files). Song metadata is plaintext SQLite; uploaded audio is encrypted at rest. Uploads briefly use private temporary files, removed on completion/failure; a systemd restart also removes its private temporary directory. Never commit `.data` or expose port 9091.
+
+## Verified deployment
+
+On air: the service is enabled and running as `mangrove`, with only `100.86.196.40:3000` and loopback S3 at `127.0.0.1:9091`. All 36 tests, type checks, and the production build passed. Browser upload and playback/seek worked over Tailscale. Full-stream SHA-256 (5,966,902 bytes), HEAD, five seek ranges, invalid ranges, and private-path rejection passed directly and through the laptop's Vite proxy. The catalog and song survived a service restart. Test uploads were removed; the original recording remains on air.

@@ -29,23 +29,29 @@ async function serveRequest(incoming: IncomingMessage, outgoing: ServerResponse,
     }
     let request: Request;
     try {
-      request = new Request(`http://127.0.0.1${incoming.url ?? "/"}`, {
+      const host = incoming.headers.host ?? "127.0.0.1";
+      if (!/^[a-zA-Z0-9.:[\]-]+$/.test(host)) throw new Error("Invalid host");
+      request = new Request(`http://${host}${incoming.url ?? "/"}`, {
         method: incoming.method,
         headers,
         signal: abort.signal,
+        ...(incoming.method !== "GET" && incoming.method !== "HEAD" ? {
+          body: Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>,
+          duplex: "half",
+        } : {}),
       });
     } catch {
       outgoing.writeHead(400, { "Content-Type": "application/json" });
       outgoing.end('{"error":"Invalid request"}');
       return;
     }
-    // Routes are read-only; rejected request bodies do not need buffering.
-    incoming.resume();
+
     const response = await handleRequest(request);
     if (abort.signal.aborted) {
       await response.body?.cancel();
       return;
     }
+    if (!incoming.readableEnded) incoming.resume();
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     if (request.method === "HEAD" || !response.body) {
       await response.body?.cancel();

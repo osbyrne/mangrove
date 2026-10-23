@@ -1,0 +1,136 @@
+name: Release server
+
+on:
+  push:
+    branches: [trunk]
+    paths: [package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-server-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Detect root package version change
+        id: version
+        run: bun run scripts/release-version.ts
+      - name: Refuse moving an existing version tag
+        if: steps.version.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA" || {
+              echo "Tag $TAG already points to another commit. Bump the version."; exit 1;
+            }
+          fi
+
+  build:
+    needs: version
+    if: needs.version.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+            rclone-arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            rclone-arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PLATFORM: ${{ matrix.platform }}
+      RCLONE_ARCH: ${{ matrix.rclone-arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install local S3 dependency for smoke test
+        run: |
+          archive="rclone-v1.75.2-linux-${RCLONE_ARCH}.zip"
+          curl --fail --location --retry 3 "https://downloads.rclone.org/v1.75.2/$archive" -o "$archive"
+          curl --fail --location --retry 3 https://downloads.rclone.org/v1.75.2/SHA256SUMS -o rclone-checksums.txt
+          grep "  $archive$" rclone-checksums.txt | sha256sum --check --strict
+          unzip -q "$archive"
+          sudo install -m 755 "rclone-v1.75.2-linux-${RCLONE_ARCH}/rclone" /usr/local/bin/rclone
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun test
+      - run: bun run build:server
+      - name: Verify standalone binary with isolated data and no Bun on PATH
+        run: bun run test:binary
+      - name: Package server
+        run: |
+          name="mangrove-v${VERSION}-${PLATFORM}"
+          mkdir -p "dist/$name"
+          cp dist/mangrove-server "dist/$name/"
+          cp deploy/releases.md "dist/$name/README.md"
+          cp deploy/mangrove-binary.service "dist/$name/mangrove.service"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.platform }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.version.outputs.tag }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-*
+          path: dist/release
+          merge-multiple: true
+      - name: Publish immutable versioned release
+        working-directory: dist/release
+        run: |
+          sha256sum ./*.tar.gz > SHA256SUMS.txt
+          if gh release view "$TAG" --json isDraft --jq '.isDraft' > is-draft.txt 2>/dev/null; then
+            if test "$(cat is-draft.txt)" = false; then
+              echo "$TAG is already published; keeping its existing assets."
+              exit 0
+            fi
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "Mangrove $TAG" \
+              --draft --notes-file ../../deploy/releases.md
+          fi
+          gh release upload "$TAG" ./*.tar.gz SHA256SUMS.txt --clobber
+          gh release edit "$TAG" --draft=false --prerelease="$PRERELEASE"
+
+  deploy-web:
+    needs: [version, publish]
+    uses: ./.github/workflows/deploy-web.yml
+    with:
+      ref: ${{ needs.version.outputs.tag }}
+    secrets: inherit

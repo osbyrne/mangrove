@@ -4,9 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { createApp } from "../src/app";
+import { createApp as makeApp } from "../src/app";
+import { SongLibrary } from "../src/library";
+import { track } from "../src/catalog";
+function createApp(options: Parameters<typeof makeApp>[0] = {}) {
+  const library = new SongLibrary(":memory:");
+  library.add({ ...track, streamUrl: `/api/tracks/${track.id}/stream` });
+  cleanups.push(() => library.close());
+  return makeApp({ ...options, library });
+}
 import { createHttpServer } from "../src/http";
-import { makeStorageLayer } from "../src/storage";
+import { createStorageClient, makeStorageLayer } from "../src/storage";
 
 const cleanups: Array<() => unknown | Promise<unknown>> = [];
 afterEach(async () => {
@@ -153,13 +161,13 @@ describe("track streaming through the signed storage adapter", () => {
     expect(await health.json()).toEqual({ status: "error", storage: "unavailable" });
   });
 
-  test("health requires usable object metadata", async () => {
+  test("health checks the bucket and streaming requires usable object metadata", async () => {
     const { app } = storageApp();
     const response = await app.handleRequest(request("/api/health"));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "ok", storage: "connected" });
     const invalid = storageApp({ invalidLength: true });
-    expect((await invalid.app.handleRequest(request("/api/health"))).status).toBe(503);
+    expect((await invalid.app.handleRequest(request(streamPath))).status).toBe(503);
   });
 
   test("network failures stay clean and catalog remains available without credentials", async () => {
@@ -256,8 +264,18 @@ describe("routing and frontend boundary", () => {
     ]) expect((await app.handleRequest(request(path))).status).toBe(404);
     expect((await app.handleRequest(request("/missing", { headers: { Accept: "application/json" } }))).status).toBe(404);
     expect((await app.handleRequest(request("/%zz"))).status).toBe(400);
-    const post = await app.handleRequest(request("/api/tracks", { method: "POST" }));
+    const post = await app.handleRequest(request("/api/tracks", { method: "DELETE" }));
     expect(post.status).toBe(405);
     expect(post.headers.get("Allow")).toBe("GET, HEAD");
+  });
+});
+
+
+describe("local storage boundary", () => {
+  test.each([
+    "https://s3.amazonaws.com", "http://example.com", "http://127.0.0.1.example.com",
+    "http://localhost:9091", "http://127.0.0.1:9091/remote", "http://user:secret@127.0.0.1:9091",
+  ])("rejects a non-loopback origin: %s", (endpoint) => {
+    expect(() => createStorageClient({ endpoint, accessKeyId: "local", secretAccessKey: "local" })).toThrow();
   });
 });

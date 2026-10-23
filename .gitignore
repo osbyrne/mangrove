@@ -6,3 +6,13 @@ dist/
 !.env.example
 .DS_Store
 *.log
+
+# Private runtime and Bun caches on the self-hosted server.
+.runtime/
+.bun/
+.cache/
+
+.wrangler/
+
+# Bun standalone build intermediates.
+*.bun-build

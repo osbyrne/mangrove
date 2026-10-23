@@ -8,12 +8,13 @@
   "scripts": {
     "dev": "bun run scripts/run.ts dev",
     "build": "bun run --filter @mangrove/web build",
+    "build:server": "VITE_API_ORIGIN= bun run build && bun run scripts/build-server.ts",
+    "test:binary": "bun run scripts/smoke-binary.ts",
     "start": "bun run scripts/run.ts start",
     "import:track": "bun run scripts/import-track.ts",
     "check": "tsc --noEmit && bun run --workspaces check",
     "test": "bun run --filter @mangrove/api test",
-    "verify:stream": "bun run scripts/verify-stream.ts",
-    "tunnel": "bun run scripts/tunnel.ts"
+    "verify:stream": "bun run scripts/verify-stream.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.11",

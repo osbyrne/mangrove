@@ -2,8 +2,10 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
-export const projectRoot = resolve(import.meta.dir, "..");
-export const dataDir = resolve(projectRoot, ".data");
+import { projectRoot, dataDir } from "../apps/api/src/paths";
+import { SongLibrary } from "../apps/api/src/library";
+import { track } from "../apps/api/src/catalog";
+export { projectRoot, dataDir };
 export const configPath = resolve(dataDir, "rclone.conf");
 const credentialsPath = resolve(dataDir, "s3.json");
 export const objectPath = "vault:music/red-white-beige.m4a";
@@ -52,10 +54,22 @@ export async function initializeStorage() {
   await chmod(credentialsPath, 0o600);
   const credentials = await Bun.file(credentialsPath).json() as { accessKeyId: string; secretAccessKey: string };
   if (!credentials.accessKeyId || !credentials.secretAccessKey) throw new Error("Invalid local S3 credentials in .data/s3.json.");
+  await rclone(["mkdir", "vault:music"]);
   return credentials;
 }
 
 export async function ensureTrack() {
   try { await rclone(["lsjson", "--stat", objectPath]); }
   catch { throw new Error('Import your song first: bun run import:track "/path/to/RedWhiteBeige 2026-05-11.m4a"'); }
+}
+
+export async function registerLegacyTrack() {
+  const library = new SongLibrary();
+  try {
+    if (!library.find(track.id)) {
+      try { await rclone(["lsjson", "--stat", objectPath]); }
+      catch { return; }
+      library.add({ ...track, streamUrl: `/api/tracks/${track.id}/stream` });
+    }
+  } finally { library.close(); }
 }

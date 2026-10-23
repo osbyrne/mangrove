@@ -1,9 +1,0 @@
-# Copy to .data/cloudflared.yml and replace all three placeholders.
-tunnel: your-tunnel-uuid
-credentials-file: /absolute/path/to/your-tunnel-uuid.json
-ingress:
-  - hostname: music.your-domain.example
-    service: http://127.0.0.1:3000
-    originRequest:
-      connectTimeout: 10s
-  - service: http_status:404

@@ -1,0 +1,25 @@
+[Unit]
+Description=Mangrove private song provider
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=mangrove
+Group=mangrove
+WorkingDirectory=/srv/mangrove
+Environment=PATH=/srv/mangrove/.runtime:/usr/local/bin:/usr/bin:/usr/sbin
+EnvironmentFile=/etc/mangrove.env
+ExecStart=/srv/mangrove/.runtime/bun run scripts/run.ts start
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/mangrove/.data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,4 @@
+import { listenHost } from "./network";
 import { createApp } from "./app";
 import { createHttpServer } from "./http";
 
@@ -17,8 +18,9 @@ if (import.meta.main) {
     throw new Error("PORT must be an integer from 1 to 65535");
   }
   const server = createHttpServer(handleRequest);
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`Mangrove backend listening on http://127.0.0.1:${port}`);
+  const host = listenHost();
+  server.listen(port, host, () => {
+    console.log(`Mangrove backend listening on http://${host}:${port}`);
   });
 
   const shutdown = async () => {

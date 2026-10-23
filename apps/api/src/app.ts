@@ -1,14 +1,14 @@
 import { realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { defaultDistDir, standalone } from "./paths";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
 import type { HealthResponse } from "@mangrove/shared";
-import { catalog, track } from "./catalog";
+import { SongLibrary } from "./library";
+import type { StoredTrack } from "./library";
+import { makeUploader } from "./upload";
 import { parseByteRange } from "./range";
 import { makeStorageLayer, ObjectStorage, StorageError } from "./storage";
 
-const defaultDistDir = fileURLToPath(new URL("../../web/dist", import.meta.url));
-const streamPath = `/api/tracks/${track.id}/stream`;
 const jsonError = (status: number, error: string) => Response.json({ error }, { status });
 const unavailable = () => jsonError(503, "Storage unavailable");
 const notFound = () => jsonError(404, "Not found");
@@ -26,7 +26,7 @@ function storageSize(response: Response): number | undefined {
     : undefined;
 }
 
-function objectMetadata(storage: ObjectStorage["Service"], request: Request) {
+function objectMetadata(storage: ObjectStorage["Service"], request: Request, track: StoredTrack) {
   return Effect.gen(function*() {
     const response = yield* storage.request(track.objectKey, "HEAD", request.signal);
     const size = storageSize(response);
@@ -38,9 +38,9 @@ function objectMetadata(storage: ObjectStorage["Service"], request: Request) {
   });
 }
 
-function streamTrack(storage: ObjectStorage["Service"], request: Request) {
+function streamTrack(storage: ObjectStorage["Service"], request: Request, track: StoredTrack) {
   return Effect.gen(function*() {
-    const size = yield* objectMetadata(storage, request);
+    const size = yield* objectMetadata(storage, request, track);
     const range = parseByteRange(request.headers.get("Range"), size);
     const headers = new Headers({
       "Accept-Ranges": "bytes",
@@ -101,8 +101,10 @@ function inside(root: string, path: string): boolean {
 
 async function publicFile(distDir: string, path: string): Promise<Bun.BunFile | undefined> {
   try {
-    const root = await realpath(distDir);
-    const candidate = await realpath(resolve(root, `.${path}`));
+    // Embedded directories are immutable and do not support realpath; disk roots still resolve symlinks.
+    const embedded = standalone && distDir === defaultDistDir;
+    const root = embedded ? distDir : await realpath(distDir);
+    const candidate = embedded ? resolve(root, `.${path}`) : await realpath(resolve(root, `.${path}`));
     if (!inside(root, candidate) || !(await stat(candidate)).isFile()) return undefined;
     return Bun.file(candidate);
   } catch {
@@ -143,9 +145,10 @@ function serveFrontend(request: Request, path: string, distDir: string) {
   }).pipe(Effect.catch(() => Effect.succeed(notFound())));
 }
 
-export function makeRequestHandlerLayer(distDir = defaultDistDir) {
+export function makeRequestHandlerLayer(distDir = defaultDistDir, library = new SongLibrary(), allowedOrigins: ReadonlySet<string> = new Set()) {
   return Layer.effect(RequestHandler, Effect.gen(function*() {
     const storage = yield* ObjectStorage;
+    const upload = makeUploader(library, storage, allowedOrigins);
     return RequestHandler.of({
       handle: (request) => Effect.gen(function*() {
         let path: string;
@@ -154,17 +157,22 @@ export function makeRequestHandlerLayer(distDir = defaultDistDir) {
         } catch {
           return jsonError(400, "Invalid URL");
         }
+        const streamMatch = /^\/api\/tracks\/([^/]+)\/stream$/.exec(path);
+        const track = streamMatch ? library.find(streamMatch[1]!) : undefined;
         const isApi = path === "/api" || path.startsWith("/api/");
-        if (isApi && path !== "/api/tracks" && path !== "/api/health" && path !== streamPath) {
+        if (isApi && path !== "/api/tracks" && path !== "/api/health" && !track) {
           return notFound();
+        }
+        if (path === "/api/tracks" && request.method === "POST") {
+          return yield* Effect.promise(() => upload(request));
         }
         if (request.method !== "GET" && request.method !== "HEAD") {
           return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
         }
-        if (path === "/api/tracks") return Response.json(catalog);
-        if (path === streamPath) return yield* streamTrack(storage, request);
+        if (path === "/api/tracks") return Response.json({ tracks: library.list() });
+        if (track) return yield* streamTrack(storage, request, track);
         if (path === "/api/health") {
-          return yield* objectMetadata(storage, request).pipe(
+          return yield* storage.health().pipe(
             Effect.map(() => Response.json({ status: "ok", storage: "connected" } satisfies HealthResponse)),
             Effect.catch(() => Effect.succeed(Response.json(
               { status: "error", storage: "unavailable" }, { status: 503 },
@@ -182,14 +190,22 @@ export function makeRequestHandlerLayer(distDir = defaultDistDir) {
 export interface AppOptions {
   readonly storageLayer?: Layer.Layer<ObjectStorage>;
   readonly distDir?: string;
+  readonly library?: SongLibrary;
+  readonly allowedOrigins?: readonly string[];
 }
 
 /** Each app owns its runtime. Tests and embedders should dispose it when finished. */
 export function createApp(options: AppOptions = {}) {
-  const runtime = ManagedRuntime.make(makeRequestHandlerLayer(options.distDir).pipe(
+  const allowedOrigins = new Set(options.allowedOrigins ?? (process.env.MANGROVE_WEB_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean));
+  for (const origin of allowedOrigins) {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "https:" || parsed.origin !== origin) throw new Error("MANGROVE_WEB_ORIGINS must contain exact HTTPS origins");
+  }
+  const library = options.library ?? new SongLibrary();
+  const runtime = ManagedRuntime.make(makeRequestHandlerLayer(options.distDir, library, allowedOrigins).pipe(
     Layer.provide(options.storageLayer ?? makeStorageLayer()),
   ));
-  const handleRequest = async (request: Request): Promise<Response> => {
+  const dispatch = async (request: Request): Promise<Response> => {
     try {
       return await runtime.runPromise(
         Effect.flatMap(RequestHandler, (handler) => handler.handle(request)),
@@ -202,5 +218,26 @@ export function createApp(options: AppOptions = {}) {
         : response;
     }
   };
-  return { runtime, handleRequest, fetch: handleRequest, dispose: () => runtime.dispose() };
+  const handleRequest = async (request: Request): Promise<Response> => {
+    const origin = request.headers.get("Origin");
+    const isApi = new URL(request.url).pathname.startsWith("/api/");
+    if (!isApi || !origin || !allowedOrigins.has(origin)) return dispatch(request);
+    let response: Response;
+    if (request.method === "OPTIONS") {
+      const method = request.headers.get("Access-Control-Request-Method") ?? "";
+      const headers = (request.headers.get("Access-Control-Request-Headers") ?? "").toLowerCase().split(",").map(value => value.trim()).filter(Boolean);
+      if (!["GET", "HEAD", "POST"].includes(method) || headers.some(header => !["content-type", "range"].includes(header))) {
+        return jsonError(403, "Cross-origin request is not allowed");
+      }
+      response = new Response(null, { status: 204 });
+      response.headers.set("Access-Control-Allow-Methods", "GET, HEAD, POST");
+      response.headers.set("Access-Control-Allow-Headers", "Content-Type, Range");
+      response.headers.set("Access-Control-Allow-Private-Network", "true");
+    } else response = await dispatch(request);
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.append("Vary", "Origin");
+    response.headers.set("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length");
+    return response;
+  };
+  return { runtime, handleRequest, fetch: handleRequest, dispose: async () => { await runtime.dispose(); if (!options.library) library.close(); } };
 }

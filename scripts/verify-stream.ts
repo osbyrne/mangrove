@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { configPath, dataDir, objectPath, projectRoot } from "./storage";
 
 const base = (process.env.VERIFY_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
-const streamUrl = `${base}/api/tracks/red-white-beige/stream`;
+const trackId = process.env.VERIFY_TRACK_ID ?? "red-white-beige";
+const streamUrl = `${base}/api/tracks/${encodeURIComponent(trackId)}/stream`;
 const source = Bun.argv[2];
 // Use an original file for end-to-end integrity, or decrypt the private vault as a baseline.
 let original: Uint8Array;
@@ -21,7 +22,7 @@ const health = await fetch(`${base}/api/health`);
 assert.equal(health.status, 200);
 assert.equal((await health.json() as { storage: string }).storage, "connected");
 const catalog = await fetch(`${base}/api/tracks`).then(r => r.json()) as { tracks: { streamUrl: string }[] };
-assert.equal(catalog.tracks[0]?.streamUrl, "/api/tracks/red-white-beige/stream");
+assert(catalog.tracks.some(track => `${base}${track.streamUrl}` === streamUrl), "Track is missing from the catalog");
 assert(!JSON.stringify(catalog).includes("9091"), "Catalog exposed a private storage URL.");
 
 const head = await fetch(streamUrl, { method: "HEAD" });
