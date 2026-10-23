@@ -11,7 +11,7 @@ WorkingDirectory=/srv/mangrove
 Environment=PATH=/usr/local/bin:/usr/bin:/usr/sbin
 Environment=MANGROVE_DATA_DIR=/srv/mangrove/.data
 EnvironmentFile=/etc/mangrove.env
-ExecStart=/srv/mangrove/mangrove-server
+ExecStart=/srv/mangrove/mangrove
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10

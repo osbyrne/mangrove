@@ -231,7 +231,7 @@ describe("track streaming through the signed storage adapter", () => {
 
 describe("routing and frontend boundary", () => {
   test("serves built files and page URLs, while rejecting API misses, missing assets and private paths", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mangrove-server-"));
+    const root = await mkdtemp(join(tmpdir(), "mangrove-api-"));
     cleanups.push(() => rm(root, { recursive: true, force: true }));
     const dist = join(root, "dist");
     await mkdir(join(dist, "assets"), { recursive: true });

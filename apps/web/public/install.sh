@@ -82,8 +82,14 @@ main() {
   download "$base/$name.tar.gz" --output "$work_dir/$name.tar.gz"
   download "$base/SHA256SUMS.txt" --output "$work_dir/SHA256SUMS.txt"
   verify "$name.tar.gz" "$work_dir/SHA256SUMS.txt"
-  tar -xzf "$work_dir/$name.tar.gz" -C "$work_dir" "$name/mangrove-server"
-  [ -f "$work_dir/$name/mangrove-server" ] && [ ! -L "$work_dir/$name/mangrove-server" ] || fail 'The archive contains no regular server executable'
+  server_entry="$name/mangrove"
+  tar -tzf "$work_dir/$name.tar.gz" > "$work_dir/archive-entries.txt"
+  if ! grep -Fx "$server_entry" "$work_dir/archive-entries.txt" >/dev/null; then
+    # v0.1.0 used the previous executable name; install every version as mangrove.
+    server_entry="$name/mangrove-server"
+  fi
+  tar -xzf "$work_dir/$name.tar.gz" -C "$work_dir" "$server_entry"
+  [ -f "$work_dir/$server_entry" ] && [ ! -L "$work_dir/$server_entry" ] || fail 'The archive contains no regular server executable'
   if [ "$need_rclone" = true ]; then
     zip="rclone-v1.75.2-linux-${rclone_arch}.zip"
     download "https://downloads.rclone.org/v1.75.2/$zip" --output "$work_dir/$zip"
@@ -96,9 +102,9 @@ main() {
   [ -w "$bin_dir" ] || fail "Cannot write to $bin_dir; choose --bin-dir or run with suitable permissions"
   # Verify every download before replacing any installed executable.
   if [ "$need_rclone" = true ]; then install_binary "$work_dir/rclone" rclone; fi
-  install_binary "$work_dir/$name/mangrove-server" mangrove-server
-  printf 'Installed Mangrove %s to %s/mangrove-server\n' "$tag" "$bin_dir"
-  printf 'Add the install directory to PATH, then start the server:\n  export PATH="%s:$PATH"\n  mangrove-server\n' "$bin_dir"
+  install_binary "$work_dir/$server_entry" mangrove
+  printf 'Installed Mangrove %s to %s/mangrove\n' "$tag" "$bin_dir"
+  printf 'Add the install directory to PATH, then start the server:\n  export PATH="%s:$PATH"\n  mangrove\n' "$bin_dir"
   printf '%s\n' 'Service setup and upgrades: https://github.com/osbyrne/mangrove/blob/trunk/deploy/releases.md'
 }
 main "$@"

@@ -8,7 +8,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(
 const installer = resolve(import.meta.dir, "../apps/web/public/install.sh");
 const payload = "#!/bin/sh\nprintf '0.1.0\\n'\n";
 
-async function fixture(options: { missingRclone?: boolean; checksumFailure?: boolean; downloadFailure?: boolean; arch?: "x64" | "arm64" } = {}) {
+async function fixture(options: { missingRclone?: boolean; checksumFailure?: boolean; downloadFailure?: boolean; arch?: "x64" | "arm64"; legacyArchive?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "mangrove-installer-test-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const tools = join(root, "tools");
@@ -17,7 +17,7 @@ async function fixture(options: { missingRclone?: boolean; checksumFailure?: boo
   const arch = options.arch ?? "x64";
   const name = `mangrove-v0.1.0-linux-${arch}`;
   await mkdir(join(root, name));
-  await writeFile(join(root, name, "mangrove-server"), payload);
+  await writeFile(join(root, name, options.legacyArchive ? "mangrove-server" : "mangrove"), payload);
   const tar = Bun.spawn(["tar", "-czf", join(root, "server.tar.gz"), "-C", root, name]);
   expect(await tar.exited).toBe(0);
   const sha = new Bun.CryptoHasher("sha256").update(await Bun.file(join(root, "server.tar.gz")).arrayBuffer()).digest("hex");
@@ -76,7 +76,7 @@ test.each(["x64", "arm64"] as const)("installs the latest %s release into a dire
   const { bin, run } = await fixture({ arch });
   const result = await run();
   expect(result.code).toBe(0);
-  expect(await Bun.file(join(bin, "mangrove-server")).text()).toBe(payload);
+  expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
   expect(await Bun.file(join(bin, "rclone")).exists()).toBe(false);
 });
 test("installs a checksummed rclone dependency when missing and accepts a pinned version", async () => {
@@ -86,20 +86,27 @@ test("installs a checksummed rclone dependency when missing and accepts a pinned
 });
 test("a checksum failure preserves an existing installation", async () => {
   const { bin, run } = await fixture({ checksumFailure: true });
-  await mkdir(bin); await writeFile(join(bin, "mangrove-server"), "previous executable");
+  await mkdir(bin); await writeFile(join(bin, "mangrove"), "previous executable");
   const result = await run();
   expect(result.code).not.toBe(0);
   expect(result.stderr).toContain("Checksum mismatch");
-  expect(await Bun.file(join(bin, "mangrove-server")).text()).toBe("previous executable");
+  expect(await Bun.file(join(bin, "mangrove")).text()).toBe("previous executable");
 });
 test("failed downloads never create an installation", async () => {
   const { bin, run } = await fixture({ downloadFailure: true });
   expect((await run(["--version", "v0.1.0"])).code).not.toBe(0);
-  expect(await Bun.file(join(bin, "mangrove-server")).exists()).toBe(false);
+  expect(await Bun.file(join(bin, "mangrove")).exists()).toBe(false);
 });
 test("rejects unsupported systems and unsafe version overrides", async () => {
   const { run } = await fixture();
   expect((await run([], { TEST_OS: "Darwin" })).stderr).toContain("Linux only");
   expect((await run([], { TEST_ARCH: "riscv64" })).code).not.toBe(0);
   for (const version of ["../../bad", "0.1.0\nmalicious"]) expect((await run(["--version", version])).code).not.toBe(0);
+});
+
+test("legacy release archives are installed under the mangrove command", async () => {
+  const { bin, run } = await fixture({ legacyArchive: true });
+  expect((await run(["--version", "v0.1.0"])).code).toBe(0);
+  expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
+  expect(await Bun.file(join(bin, "mangrove-server")).exists()).toBe(false);
 });

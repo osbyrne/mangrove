@@ -70,7 +70,7 @@ Then open **http://127.0.0.1:5173**. This starts only the frontend proxy. See **
 curl -fsSL https://mangrove-web.osbyrne.workers.dev/install.sh | sh
 ```
 
-The installer verifies the latest stable Linux release and installs it to `~/.local/bin`, adding rclone if needed. Service configuration and song data are preserved.
+The installer verifies the latest stable Linux release and installs the `mangrove` command to `~/.local/bin`, adding rclone if needed. Follow its PATH instruction, then run `mangrove`. Service configuration and song data are preserved.
 
 Changing the root `package.json` version on `trunk` builds native Linux x64 and ARM64 server binaries and publishes `vVERSION` on GitHub Releases, with SHA-256 checksums. The executable includes the API, frontend, and Bun runtime; rclone remains a separate dependency. SemVer prereleases publish as prereleases. Manual **Release server** runs can publish the current version. The existing frontend deployment runs for the same release tag.
 

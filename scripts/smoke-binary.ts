@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { projectRoot } from "../apps/api/src/paths";
 import { version } from "../package.json";
 
-const binary = resolve(Bun.argv[2] ?? join(projectRoot, "dist/mangrove-server"));
+const binary = resolve(Bun.argv[2] ?? join(projectRoot, "dist/mangrove"));
 const rclone = Bun.which("rclone");
 if (!rclone) throw new Error("Install rclone to smoke-test the binary");
 const root = await mkdtemp(join(tmpdir(), "mangrove-binary-"));

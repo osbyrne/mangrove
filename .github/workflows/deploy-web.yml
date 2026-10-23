@@ -45,7 +45,7 @@ jobs:
       - name: Verify installation from the real latest release
         run: |
           MANGROVE_INSTALL_DIR="$RUNNER_TEMP/mangrove-install/bin" sh apps/web/public/install.sh
-          "$RUNNER_TEMP/mangrove-install/bin/mangrove-server" --version
+          "$RUNNER_TEMP/mangrove-install/bin/mangrove" --version
       - run: bun run --filter @mangrove/shared check
       - run: bun run --filter @mangrove/web check
       - run: bun run build

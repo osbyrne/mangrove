@@ -83,7 +83,7 @@ if (import.meta.main) {
   const args = Bun.argv.slice(2);
   if (args.length === 1 && args[0] === "--version") console.log(version);
   else if (args.length === 1 && args[0] === "--help") {
-    console.log("Usage: mangrove-server [--version|--help]\nHOST=127.0.0.1 PORT=3000 S3_PORT=9091 MANGROVE_DATA_DIR=./.data\nRequires rclone on PATH. The API, frontend and local S3 start together.");
+    console.log("Usage: mangrove [--version|--help]\nHOST=127.0.0.1 PORT=3000 S3_PORT=9091 MANGROVE_DATA_DIR=./.data\nRequires rclone on PATH. The API, frontend and local S3 start together.");
   } else if (args.length) {
     console.error("Unknown arguments. Use --help.");
     process.exitCode = 1;

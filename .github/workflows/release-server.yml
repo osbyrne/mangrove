@@ -84,7 +84,7 @@ jobs:
         run: |
           name="mangrove-v${VERSION}-${PLATFORM}"
           mkdir -p "dist/$name"
-          cp dist/mangrove-server "dist/$name/"
+          cp dist/mangrove "dist/$name/"
           cp deploy/releases.md "dist/$name/README.md"
           cp deploy/mangrove-binary.service "dist/$name/mangrove.service"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
