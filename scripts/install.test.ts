@@ -8,14 +8,15 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(
 const installer = resolve(import.meta.dir, "../apps/web/public/install.sh");
 const payload = "#!/bin/sh\nprintf '0.1.0\\n'\n";
 
-async function fixture(options: { missingRclone?: boolean; checksumFailure?: boolean; downloadFailure?: boolean; arch?: "x64" | "arm64"; legacyArchive?: boolean } = {}) {
+async function fixture(options: { missingRclone?: boolean; checksumFailure?: boolean; downloadFailure?: boolean; arch?: "x64" | "arm64"; legacyArchive?: boolean; os?: "linux" | "darwin" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "mangrove-installer-test-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const tools = join(root, "tools");
   const bin = join(root, "install with spaces");
   await mkdir(tools);
   const arch = options.arch ?? "x64";
-  const name = `mangrove-v0.1.0-linux-${arch}`;
+  const os = options.os ?? "linux";
+  const name = `mangrove-v0.1.0-${os}-${arch}`;
   await mkdir(join(root, name));
   await writeFile(join(root, name, options.legacyArchive ? "mangrove-server" : "mangrove"), payload);
   const tar = Bun.spawn(["tar", "-czf", join(root, "server.tar.gz"), "-C", root, name]);
@@ -33,9 +34,11 @@ async function fixture(options: { missingRclone?: boolean; checksumFailure?: boo
     await chmod(path, 0o755);
   }
   await script("uname", 'case "$1" in -s) printf "%s\\n" "${TEST_OS:-Linux}" ;; -m) printf "%s\\n" "$TEST_ARCH" ;; esac');
+  await script("sw_vers", 'printf "%s\\n" "${TEST_MACOS_VERSION:-13.0}"');
+  await script("sysctl", 'printf "%s\\n" "${TEST_APPLE_SILICON:-0}"');
   if (!options.missingRclone) await script("rclone", 'printf "rclone v1.75.2\\n"');
   else {
-    const directory = `rclone-v1.75.2-linux-${arch === "x64" ? "amd64" : "arm64"}`;
+    const directory = `rclone-v1.75.2-${os === "darwin" ? "osx" : "linux"}-${arch === "x64" ? "amd64" : "arm64"}`;
     await mkdir(join(root, directory));
     await writeFile(join(root, directory, "rclone"), "#!/bin/sh\nprintf 'rclone v1.75.2\\n'\n");
     const zip = Bun.spawn(["zip", "-q", join(root, "rclone.zip"), `${directory}/rclone`], { cwd: root });
@@ -64,7 +67,7 @@ esac`);
   const run = async (args: string[] = [], overrides: Record<string, string> = {}) => {
     const child = Bun.spawn(["/bin/sh", installer, ...args], { env: {
       PATH: tools, HOME: root, TMPDIR: root, MANGROVE_INSTALL_DIR: bin, TEST_FIXTURE: root,
-      TEST_ARCH: arch === "x64" ? "x86_64" : "aarch64", TEST_DOWNLOAD_FAILURE: options.downloadFailure ? "yes" : "", ...overrides,
+      TEST_OS: os === "darwin" ? "Darwin" : "Linux", TEST_ARCH: arch === "x64" ? "x86_64" : "aarch64", TEST_DOWNLOAD_FAILURE: options.downloadFailure ? "yes" : "", ...overrides,
     }, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     return { stdout, stderr, code };
@@ -72,8 +75,10 @@ esac`);
   return { root, bin, run };
 }
 
-test.each(["x64", "arm64"] as const)("installs the latest %s release into a directory with spaces", async arch => {
-  const { bin, run } = await fixture({ arch });
+test.each([
+  ["linux", "x64"], ["linux", "arm64"], ["darwin", "x64"], ["darwin", "arm64"],
+] as const)("installs the latest %s %s release into a directory with spaces", async (os, arch) => {
+  const { bin, run } = await fixture({ os, arch });
   const result = await run();
   expect(result.code).toBe(0);
   expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
@@ -99,7 +104,7 @@ test("failed downloads never create an installation", async () => {
 });
 test("rejects unsupported systems and unsafe version overrides", async () => {
   const { run } = await fixture();
-  expect((await run([], { TEST_OS: "Darwin" })).stderr).toContain("Linux only");
+  expect((await run([], { TEST_OS: "Windows_NT" })).stderr).toContain("Supported systems");
   expect((await run([], { TEST_ARCH: "riscv64" })).code).not.toBe(0);
   for (const version of ["../../bad", "0.1.0\nmalicious"]) expect((await run(["--version", version])).code).not.toBe(0);
 });
@@ -109,4 +114,22 @@ test("legacy release archives are installed under the mangrove command", async (
   expect((await run(["--version", "v0.1.0"])).code).toBe(0);
   expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
   expect(await Bun.file(join(bin, "mangrove-server")).exists()).toBe(false);
+});
+
+test.each(["x64", "arm64"] as const)("installs the matching macOS %s rclone dependency", async arch => {
+  const { bin, run } = await fixture({ os: "darwin", arch, missingRclone: true });
+  expect((await run()).code).toBe(0);
+  expect(await Bun.file(join(bin, "rclone")).text()).toContain("rclone v1.75.2");
+});
+test("prefers Apple Silicon binaries under Rosetta", async () => {
+  const { bin, run } = await fixture({ os: "darwin", arch: "arm64", missingRclone: true });
+  expect((await run([], { TEST_ARCH: "x86_64", TEST_APPLE_SILICON: "1" })).code).toBe(0);
+  expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
+});
+test("rejects unsupported macOS versions before installing", async () => {
+  const { bin, run } = await fixture({ os: "darwin" });
+  const result = await run([], { TEST_MACOS_VERSION: "12.7" });
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("macOS 13 or later");
+  expect(await Bun.file(join(bin, "mangrove")).exists()).toBe(false);
 });

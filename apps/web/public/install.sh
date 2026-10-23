@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mangrove Linux installer. Inspect this script at /install.sh before running it.
+# Mangrove macOS and Linux installer. Inspect this script at /install.sh before running it.
 set -eu
 
 fail() { printf 'Mangrove: %s\n' "$*" >&2; exit 1; }
@@ -40,23 +40,37 @@ main() {
       --version) [ "$#" -ge 2 ] || fail '--version needs a release version'; tag=$2; shift 2 ;;
       --bin-dir) [ "$#" -ge 2 ] || fail '--bin-dir needs an absolute path'; bin_dir=$2; shift 2 ;;
       --help)
-        printf '%s\n' 'Usage: sh install.sh [--version v0.1.0] [--bin-dir /absolute/path]' \
-          'Defaults: latest stable release, $HOME/.local/bin. Linux glibc x64/ARM64 only.' \
+        printf '%s\n' 'Usage: sh install.sh [--version v0.1.2] [--bin-dir /absolute/path]' \
+          'Defaults: latest stable release, $HOME/.local/bin. macOS 13+ and Linux glibc, x64/ARM64.' \
           'Installs rclone 1.75.2 if rclone 1.65+ is unavailable. Requires curl, tar, a SHA-256 tool, and unzip when installing rclone.'
         return ;;
       *) fail "Unknown argument: $1" ;;
     esac
   done
-  [ "$(uname -s)" = Linux ] || fail 'Release binaries currently support Linux only'
+  case "$(uname -s)" in
+    Linux) os=linux; rclone_os=linux ;;
+    Darwin)
+      os=darwin; rclone_os=osx
+      mac_version=$(sw_vers -productVersion)
+      mac_major=${mac_version%%.*}
+      case "$mac_major" in ''|*[!0-9]*) fail 'Cannot determine the macOS version' ;; esac
+      [ "$mac_major" -ge 13 ] || fail 'Mangrove requires macOS 13 or later'
+      ;;
+    *) fail 'Supported systems: macOS and Linux' ;;
+  esac
   case "$(uname -m)" in
     x86_64|amd64) arch=x64; rclone_arch=amd64 ;;
     aarch64|arm64) arch=arm64; rclone_arch=arm64 ;;
     *) fail 'Supported architectures: x64 and ARM64' ;;
   esac
+  # Prefer native Apple Silicon binaries when the shell is running under Rosetta.
+  if [ "$os" = darwin ] && command -v sysctl >/dev/null 2>&1 && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+    arch=arm64; rclone_arch=arm64
+  fi
   case "$bin_dir" in /*) ;; *) fail 'The install directory must be an absolute path' ;; esac
   for tool in curl tar awk mktemp cp chmod mv mkdir grep uname rm; do command -v "$tool" >/dev/null 2>&1 || fail "Install $tool first"; done
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail 'Install sha256sum or shasum first'
-  if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
+  if [ "$os" = linux ] && command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
     fail 'Alpine/musl is not supported; use a glibc Linux distribution'
   fi
   need_rclone=true
@@ -76,9 +90,9 @@ main() {
   staged=
   trap cleanup 0
   trap 'exit 1' HUP INT TERM
-  name="mangrove-${tag}-linux-${arch}"
+  name="mangrove-${tag}-${os}-${arch}"
   base="https://github.com/osbyrne/mangrove/releases/download/$tag"
-  printf 'Downloading Mangrove %s for Linux %s…\n' "$tag" "$arch"
+  printf 'Downloading Mangrove %s for %s %s…\n' "$tag" "$os" "$arch"
   download "$base/$name.tar.gz" --output "$work_dir/$name.tar.gz"
   download "$base/SHA256SUMS.txt" --output "$work_dir/SHA256SUMS.txt"
   verify "$name.tar.gz" "$work_dir/SHA256SUMS.txt"
@@ -91,11 +105,11 @@ main() {
   tar -xzf "$work_dir/$name.tar.gz" -C "$work_dir" "$server_entry"
   [ -f "$work_dir/$server_entry" ] && [ ! -L "$work_dir/$server_entry" ] || fail 'The archive contains no regular server executable'
   if [ "$need_rclone" = true ]; then
-    zip="rclone-v1.75.2-linux-${rclone_arch}.zip"
+    zip="rclone-v1.75.2-${rclone_os}-${rclone_arch}.zip"
     download "https://downloads.rclone.org/v1.75.2/$zip" --output "$work_dir/$zip"
     download https://downloads.rclone.org/v1.75.2/SHA256SUMS --output "$work_dir/rclone-checksums.txt"
     verify "$zip" "$work_dir/rclone-checksums.txt"
-    unzip -p "$work_dir/$zip" "rclone-v1.75.2-linux-${rclone_arch}/rclone" > "$work_dir/rclone"
+    unzip -p "$work_dir/$zip" "rclone-v1.75.2-${rclone_os}-${rclone_arch}/rclone" > "$work_dir/rclone"
     [ -s "$work_dir/rclone" ] || fail 'The rclone archive is empty'
   fi
   mkdir -p "$bin_dir"
