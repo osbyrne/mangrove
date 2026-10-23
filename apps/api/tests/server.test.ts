@@ -236,6 +236,7 @@ describe("routing and frontend boundary", () => {
     const dist = join(root, "dist");
     await mkdir(join(dist, "assets"), { recursive: true });
     await writeFile(join(dist, "index.html"), "<html>room</html>");
+    await writeFile(join(dist, "install.sh"), "#!/bin/sh\nprintf installed\n");
     await writeFile(join(dist, "assets", "app.js"), "console.log('room')");
     await writeFile(join(root, "secret.txt"), "private");
     await writeFile(join(dist, ".env"), "private");
@@ -249,6 +250,10 @@ describe("routing and frontend boundary", () => {
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("<html>room</html>");
     }
+    const installer = await app.handleRequest(request("/install.sh"));
+    expect(installer.status).toBe(200);
+    expect(installer.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(await installer.text()).toStartWith("#!/bin/sh");
     const script = await app.handleRequest(request("/assets/app.js"));
     expect(script.status).toBe(200);
     expect(await script.text()).toBe("console.log('room')");

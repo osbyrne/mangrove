@@ -60,6 +60,9 @@ try {
     assert.equal(response.status, 200, `Embedded asset missing: ${path}`);
     await response.body?.cancel();
   }
+  const installer = await fetch(`${origin}/install.sh`);
+  assert.equal(installer.status, 200);
+  assert((await installer.text()).startsWith("#!/bin/sh"), "Embedded installer is missing");
   const wav = new Uint8Array(44 + 2048);
   const view = new DataView(wav.buffer);
   const text = (offset: number, value: string) => wav.set(new TextEncoder().encode(value), offset);

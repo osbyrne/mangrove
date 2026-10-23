@@ -40,6 +40,12 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Set CLOUDFLARE_ACCOUNT_ID'; exit 1; }
           test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Set the CLOUDFLARE_API_TOKEN secret'; exit 1; }
       - run: bun install --frozen-lockfile
+      - run: sh -n apps/web/public/install.sh
+      - run: bun test scripts/install.test.ts
+      - name: Verify installation from the real latest release
+        run: |
+          MANGROVE_INSTALL_DIR="$RUNNER_TEMP/mangrove-install/bin" sh apps/web/public/install.sh
+          "$RUNNER_TEMP/mangrove-install/bin/mangrove-server" --version
       - run: bun run --filter @mangrove/shared check
       - run: bun run --filter @mangrove/web check
       - run: bun run build

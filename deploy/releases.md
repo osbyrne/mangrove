@@ -1,5 +1,19 @@
 # Mangrove server binaries
 
+Install the latest stable release from the frontend:
+
+```sh
+curl -fsSL https://mangrove-web.osbyrne.workers.dev/install.sh | sh
+```
+
+The installer detects Linux x64/ARM64, verifies SHA-256 checksums, and installs to `~/.local/bin` without sudo. It also installs rclone 1.75.2 there if rclone 1.65+ is missing (requires unzip). Follow its printed PATH instruction. It leaves service configuration and song data unchanged. To pin a version or choose another directory:
+
+```sh
+curl -fsSL https://mangrove-web.osbyrne.workers.dev/install.sh | sh -s -- --version v0.1.0 --bin-dir /absolute/path/bin
+```
+
+You can inspect `/install.sh` first. `MANGROVE_VERSION` and `MANGROVE_INSTALL_DIR` are equivalent environment overrides. macOS and Alpine/musl are currently unsupported.
+
 Download `mangrove-vVERSION-linux-x64.tar.gz` for air or another x86-64 Linux server, or `mangrove-vVERSION-linux-arm64.tar.gz` for ARM64 Linux. These are glibc builds; Alpine/musl is not supported. Both archives contain `mangrove-server`, this guide, and a systemd unit. `SHA256SUMS.txt` verifies the archives.
 
 The executable embeds the Bun runtime, API, dependencies, and frontend. Install **rclone 1.65+** separately; Bun, Node, a source checkout, and cloud accounts are not needed on the server. The executables are unsigned.

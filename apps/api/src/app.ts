@@ -122,7 +122,7 @@ function serveFrontend(request: Request, path: string, distDir: string) {
       ) return notFound();
 
       const extension = extname(path).toLowerCase();
-      if (extension && !publicExtensions.has(extension)) return notFound();
+      if (extension && !publicExtensions.has(extension) && path !== "/install.sh") return notFound();
       let file = await publicFile(distDir, path);
       if (!file) {
         // Only extensionless page URLs can use the SPA shell. Missing assets stay 404.
@@ -135,7 +135,7 @@ function serveFrontend(request: Request, path: string, distDir: string) {
       if (!file) return notFound();
       return new Response(request.method === "HEAD" ? null : file, {
         headers: {
-          "Content-Type": file.type || "application/octet-stream",
+          "Content-Type": path === "/install.sh" ? "text/plain; charset=utf-8" : file.type || "application/octet-stream",
           "Content-Length": String(file.size),
           "X-Content-Type-Options": "nosniff",
         },

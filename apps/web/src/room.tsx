@@ -41,6 +41,12 @@ export function ListeningRoom() {
     queryFn: ({ signal }) => getHealth(signal),
     refetchInterval: 60_000,
   }));
+  const installCommand = `curl -fsSL ${window.location.protocol === "https:" ? window.location.origin : "https://mangrove-web.osbyrne.workers.dev"}/install.sh | sh`;
+  const [copyStatus, setCopyStatus] = createSignal("");
+  async function copyInstallCommand() {
+    try { await navigator.clipboard.writeText(installCommand); setCopyStatus("Copied"); }
+    catch { setCopyStatus("Select and copy the command above."); }
+  }
   const [uploading, setUploading] = createSignal(false);
   const [uploadStatus, setUploadStatus] = createSignal("");
   const [uploadError, setUploadError] = createSignal("");
@@ -668,6 +674,18 @@ export function ListeningRoom() {
               </Show>
             </div>
           </section>
+
+          <details {...stylex.attrs(styles.base, styles.installDetails)}>
+            <summary {...stylex.attrs(styles.base, styles.focusRing, styles.installSummary)}>Install server</summary>
+            <div {...stylex.attrs(styles.base, styles.installBody)}>
+              <code {...stylex.attrs(styles.base, styles.installCommand)}>{installCommand}</code>
+              <button type="button" onClick={() => void copyInstallCommand()}
+                {...stylex.attrs(styles.base, styles.button, styles.textButton, styles.focusRing, styles.touchTarget)}>Copy command</button>
+              <span role="status" {...stylex.attrs(styles.base)}>{copyStatus()}</span>
+              <p {...stylex.attrs(styles.base, styles.textReset)}>Linux x64 or ARM64. Installs to ~/.local/bin and adds rclone if needed.</p>
+              <a href="/install.sh" {...stylex.attrs(styles.base, styles.link, styles.focusRing)}>View installer</a>
+            </div>
+          </details>
 
           <footer {...stylex.attrs(styles.base, styles.roomFooter)}>
             <div

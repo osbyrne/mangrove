@@ -5,6 +5,11 @@ const spin = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
 const equalize = stylex.keyframes({ "50%": { transform: "scaleY(.4)" } });
 
 export const styles = stylex.create({
+  installDetails: { marginTop: 24, fontSize: 14 },
+  installSummary: { cursor: "pointer", width: "fit-content" },
+  installBody: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 12, paddingTop: 16 },
+  installCommand: { overflowWrap: "anywhere", userSelect: "text" },
+
   uploadControls: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 24 },
   uploadStatus: { fontSize: 14 },
 
