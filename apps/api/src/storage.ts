@@ -1,6 +1,12 @@
-import { S3Client, GetObjectCommand, HeadObjectCommand, HeadBucketCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { lstat, mkdir, rename, unlink } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { Context, Effect, Layer } from "effect";
+import { dataDir } from "./paths";
 
 export class StorageError {
   readonly _tag = "StorageError";
@@ -19,116 +25,101 @@ export class ObjectStorage extends Context.Service<ObjectStorage, {
   ) => Effect.Effect<Response, StorageError>;
 }>()("mangrove/ObjectStorage") {}
 
-export interface StorageConfig {
-  readonly endpoint?: string;
-  readonly accessKeyId?: string;
-  readonly secretAccessKey?: string;
-}
+const objectKeyPattern = /^songs\/[A-Za-z0-9-]+\.(?:mp3|m4a|flac|wav|ogg|opus)$/i;
 
-export function storageConfigFromEnv(env: NodeJS.ProcessEnv = process.env): StorageConfig {
-  return {
-    endpoint: env.S3_ENDPOINT ?? "http://127.0.0.1:9091",
-    accessKeyId: env.S3_ACCESS_KEY_ID,
-    secretAccessKey: env.S3_SECRET_ACCESS_KEY,
-  };
-}
-
-/** Only literal loopback endpoints are accepted; never contact a remote S3 service. */
-export function createStorageClient(config: StorageConfig): S3Client {
-  const endpoint = new URL(config.endpoint ?? "http://127.0.0.1:9091");
-  if (!['127.0.0.1', '[::1]'].includes(endpoint.hostname) ||
-      endpoint.protocol !== "http:" || endpoint.username || endpoint.password ||
-      endpoint.pathname !== "/" || endpoint.search || endpoint.hash) {
-    throw new Error("S3 endpoint must be an HTTP loopback origin");
+function objectPath(root: string, key: string) {
+  if (!objectKeyPattern.test(key)) throw new StorageError("unavailable");
+  const path = resolve(root, key.slice("songs/".length));
+  const pathFromRoot = relative(root, path);
+  if (pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || pathFromRoot === "") {
+    throw new StorageError("unavailable");
   }
-  if (!config.accessKeyId || !config.secretAccessKey) throw new Error("Missing local S3 credentials");
-  return new S3Client({
-    endpoint: endpoint.origin,
-    region: "us-east-1",
-    credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
-    forcePathStyle: true,
-    retryMode: "standard",
-    maxAttempts: 1,
-  });
+  return path;
 }
 
-export function signStorageRequest(client: S3Client, key: string, method: "GET" | "HEAD", range?: string) {
-  const input = { Bucket: "music", Key: key, ...(range ? { Range: range } : {}) };
-  return getSignedUrl(client, method === "HEAD" ? new HeadObjectCommand(input) : new GetObjectCommand(input), { expiresIn: 60 });
+function rangeBounds(range: string | undefined, size: number) {
+  if (!range) return undefined;
+  const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+  if (!match) throw new StorageError("unavailable");
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end >= size) {
+    throw new StorageError("unavailable");
+  }
+  return { start, end };
 }
 
-export async function storageReady(client: S3Client) {
-  const url = await getSignedUrl(client, new HeadBucketCommand({ Bucket: "music" }), { expiresIn: 60 });
-  const response = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(2000), redirect: "error" });
-  await response.body?.cancel();
-  return response.ok;
-}
-
-/** Configuration is captured by the layer, with no ambient AWS credential fallback. */
-export function makeStorageLayer(config: StorageConfig = storageConfigFromEnv()) {
-  return Layer.sync(ObjectStorage, () => {
-    let client: S3Client | undefined;
-    try {
-      client = createStorageClient(config);
-    } catch {
-      // Invalid storage configuration must not prevent catalog/static requests.
-    }
-
-    return ObjectStorage.of({
-      health: () => Effect.tryPromise({
-        try: async () => { if (!client || !await storageReady(client)) throw new StorageError("unavailable"); },
-        catch: () => new StorageError("unavailable"),
-      }),
-      put: (key, file, signal) => Effect.tryPromise({
-        try: async () => {
-          if (!client) throw new StorageError("unavailable");
-          const url = await getSignedUrl(client, new PutObjectCommand({ Bucket: "music", Key: key }), { expiresIn: 900 });
-          const response = await fetch(url, { method: "PUT", body: file, signal, redirect: "error" });
-          await response.body?.cancel();
-          if (!response.ok) throw new StorageError("unavailable");
-        },
-        catch: () => new StorageError("unavailable"),
-      }),
-      remove: (key, signal) => Effect.tryPromise({
-        try: async () => {
-          if (!client) throw new StorageError("unavailable");
-          const url = await getSignedUrl(client, new DeleteObjectCommand({ Bucket: "music", Key: key }), { expiresIn: 60 });
-          const response = await fetch(url, { method: "DELETE", signal, redirect: "error" });
-          await response.body?.cancel();
-          if (!response.ok) throw new StorageError("unavailable");
-        },
-        catch: () => new StorageError("unavailable"),
-      }),
-      request: (key, method, requestSignal, range) => Effect.tryPromise({
-        try: async (effectSignal) => {
-          if (!client) throw new StorageError("unavailable");
-          const timeout = new AbortController();
-          const timer = setTimeout(() => timeout.abort(), 10_000);
-          let upstream: Response;
-          try {
-            upstream = await fetch(await signStorageRequest(client, key, method, range), {
-              method,
-              headers: range ? { Range: range, "Accept-Encoding": "identity" } : { "Accept-Encoding": "identity" },
-              signal: AbortSignal.any([requestSignal, effectSignal, timeout.signal]),
-              redirect: "error",
-            });
-          } finally {
-            // Only time out response headers; long audio streams may run indefinitely.
-            clearTimeout(timer);
-          }
-          if (upstream.status === 404) {
-            await upstream.body?.cancel();
-            throw new StorageError("missing");
-          }
-          if (!upstream.ok) {
-            await upstream.body?.cancel();
-            throw new StorageError("unavailable");
-          }
-          return upstream;
-        },
-        // Neither upstream bodies, signed URLs, credentials nor exception text reach clients.
-        catch: (error) => error instanceof StorageError ? error : new StorageError("unavailable"),
-      }),
-    });
-  });
+/** Stores song bytes as ordinary files under <dataDir>/songs. */
+export function makeStorageLayer(root = resolve(dataDir, "songs")) {
+  const storageRoot = resolve(root);
+  return Layer.sync(ObjectStorage, () => ObjectStorage.of({
+    health: () => Effect.tryPromise({
+      try: async () => {
+        await mkdir(storageRoot, { recursive: true, mode: 0o700 });
+        const info = await lstat(storageRoot);
+        if (!info.isDirectory() || info.isSymbolicLink()) throw new StorageError("unavailable");
+      },
+      catch: () => new StorageError("unavailable"),
+    }),
+    put: (key, file, signal) => Effect.tryPromise({
+      try: async () => {
+        const path = objectPath(storageRoot, key);
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        const parent = await lstat(dirname(path));
+        if (!parent.isDirectory() || parent.isSymbolicLink()) throw new StorageError("unavailable");
+        const temporary = `${path}.${randomUUID()}.tmp`;
+        try {
+          await pipeline(
+            Readable.fromWeb(file.stream() as unknown as NodeReadableStream<Uint8Array>),
+            createWriteStream(temporary, { flags: "wx", mode: 0o600 }),
+            { signal },
+          );
+          await rename(temporary, path);
+        } catch (error) {
+          await unlink(temporary).catch(() => {});
+          throw error;
+        }
+      },
+      catch: () => new StorageError("unavailable"),
+    }),
+    remove: (key, signal) => Effect.tryPromise({
+      try: async () => {
+        if (signal.aborted) throw new StorageError("unavailable");
+        await unlink(objectPath(storageRoot, key)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+      },
+      catch: () => new StorageError("unavailable"),
+    }),
+    request: (key, method, signal, range) => Effect.tryPromise({
+      try: async () => {
+        if (signal.aborted) throw new StorageError("unavailable");
+        const path = objectPath(storageRoot, key);
+        let info;
+        try { info = await lstat(path); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new StorageError("missing");
+          throw error;
+        }
+        if (!info.isFile() || info.isSymbolicLink()) throw new StorageError("unavailable");
+        const bounds = rangeBounds(range, info.size);
+        const start = bounds?.start ?? 0;
+        const end = bounds?.end ?? info.size - 1;
+        const length = bounds ? end - start + 1 : info.size;
+        const headers = new Headers({
+          "Content-Length": String(length),
+          "Content-Type": "application/octet-stream",
+          "Accept-Ranges": "bytes",
+          "Content-Encoding": "identity",
+        });
+        if (bounds) headers.set("Content-Range", `bytes ${start}-${end}/${info.size}`);
+        const status = bounds ? 206 : 200;
+        if (method === "HEAD") return new Response(null, { status, headers });
+        const file = Bun.file(path);
+        const body = bounds ? file.slice(start, end + 1) : file;
+        return new Response(body, { status, headers });
+      },
+      catch: (error) => error instanceof StorageError ? error : new StorageError("unavailable"),
+    }),
+  }));
 }

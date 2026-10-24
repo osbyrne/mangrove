@@ -69,8 +69,7 @@ function streamTrack(storage: ObjectStorage["Service"], request: Request, track:
       partial ? `bytes=${range.start}-${range.end}` : undefined,
     );
     if (
-      // rclone's S3 server sends 200 for ranged reads, with correct range metadata.
-      (upstream.status !== status && !(partial && upstream.status === 200)) ||
+      upstream.status !== status ||
       storageSize(upstream) !== length ||
       upstream.headers.get("Content-Range") !== contentRange ||
       (length > 0 && !upstream.body)
@@ -78,7 +77,7 @@ function streamTrack(storage: ObjectStorage["Service"], request: Request, track:
       yield* Effect.promise(async () => { await upstream.body?.cancel(); });
       return yield* Effect.fail(new StorageError("unavailable"));
     }
-    // Forward the original stream: backpressure and cancellation reach fetch/S3.
+    // Forward the file stream so the HTTP response keeps backpressure and cancellation.
     return new Response(upstream.body, { status, headers });
   }).pipe(Effect.catch((error) => Effect.succeed(
     error.kind === "missing" ? jsonError(404, "Track not found") : unavailable(),

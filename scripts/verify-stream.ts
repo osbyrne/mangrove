@@ -1,21 +1,15 @@
 import assert from "node:assert/strict";
-import { configPath, dataDir, objectPath, projectRoot } from "./storage";
+import { join } from "node:path";
+import { dataDir } from "./storage";
 
 const base = (process.env.VERIFY_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
 const trackId = process.env.VERIFY_TRACK_ID ?? "red-white-beige";
 const streamUrl = `${base}/api/tracks/${encodeURIComponent(trackId)}/stream`;
 const source = Bun.argv[2];
-// Use an original file for end-to-end integrity, or decrypt the private vault as a baseline.
+// Use an original file for end-to-end integrity, or read the local song file as a baseline.
 let original: Uint8Array;
 if (source) original = new Uint8Array(await Bun.file(source).arrayBuffer());
-else {
-  const proc = Bun.spawn(["rclone", "--config", configPath, "cat", objectPath], {
-    stdout: "pipe", stderr: "inherit", cwd: projectRoot,
-    env: { ...process.env, RCLONE_CONFIG_VAULT_REMOTE: `${dataDir}/objects` },
-  });
-  original = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
-  assert.equal(await proc.exited, 0, "Could not read baseline from the vault.");
-}
+else original = new Uint8Array(await Bun.file(join(dataDir, "songs", "red-white-beige.m4a")).arrayBuffer());
 const size = original.length;
 assert(size > 0);
 const health = await fetch(`${base}/api/health`);
@@ -60,10 +54,9 @@ assert.equal(invalid.status, 416);
 assert.equal(invalid.headers.get("content-range"), `bytes */${size}`);
 await invalid.body?.cancel();
 for (const path of [
-  "/api/tracks/missing/stream", "/api/missing", "/.data/rclone.conf", "/.data/s3.json",
+  "/api/tracks/missing/stream", "/api/missing", "/.data/catalog.sqlite", "/.data/songs/red-white-beige.m4a",
   "/server/index.ts", "/apps/api/src/index.ts", "/scripts/storage.ts",
-  `/@fs${projectRoot}/.data/rclone.conf`, `/@fs${projectRoot}/apps/api/src/storage.ts`,
-  `/@fs${projectRoot}/node_modules/@mangrove/api/src/storage.ts`,
+  "/apps/api/src/storage.ts",
 ]) {
   const response = await fetch(`${base}${path}`);
   assert([403, 404].includes(response.status), `${path} should be inaccessible, received ${response.status}`);

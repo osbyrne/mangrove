@@ -27,7 +27,7 @@ function matchesFormat(header: Uint8Array, extension: string) {
   return text.startsWith("ID3") || (header[0] === 0xff && ((header[1] ?? 0) & 0xe0) === 0xe0);
 }
 
-/** Bound memory and disk use, validate format, then publish only after S3 acknowledges the PUT. */
+/** Bound memory and disk use, validate format, then publish after the local file is committed. */
 export function makeUploader(library: SongLibrary, storage: ObjectStorage["Service"], allowedOrigins: ReadonlySet<string> = new Set()) {
   let active = 0;
   return async (request: Request): Promise<Response> => {

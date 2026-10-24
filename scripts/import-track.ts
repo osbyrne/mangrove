@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { ensureTrack, initializeStorage, objectPath, rclone } from "./storage";
+import { ensureTrack, importTrack, initializeStorage } from "./storage";
 
 const source = Bun.argv[2];
 if (!source) {
@@ -12,6 +12,6 @@ if (!await file.exists() || file.size === 0) throw new Error("The source audio f
 const header = new Uint8Array(await file.slice(0, 12).arrayBuffer());
 if (new TextDecoder().decode(header.slice(4, 8)) !== "ftyp") throw new Error("Expected an M4A/MP4 audio file.");
 await initializeStorage();
-await rclone(["copyto", resolve(source), objectPath]);
+await importTrack(resolve(source));
 await ensureTrack();
-console.log(`Imported ${file.size.toLocaleString()} bytes into the encrypted local music bucket.`);
+console.log(`Imported ${file.size.toLocaleString()} bytes into .data/songs.`);

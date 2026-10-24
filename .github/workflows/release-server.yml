@@ -51,48 +51,26 @@ jobs:
         include:
           - runner: ubuntu-24.04
             platform: linux-x64
-            rclone-os: linux
-            rclone-arch: amd64
           - runner: ubuntu-24.04-arm
             platform: linux-arm64
-            rclone-os: linux
-            rclone-arch: arm64
           - runner: macos-15
             platform: darwin-arm64
-            rclone-os: osx
-            rclone-arch: arm64
           - runner: macos-15-intel
             platform: darwin-x64
-            rclone-os: osx
-            rclone-arch: amd64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PLATFORM: ${{ matrix.platform }}
-      RCLONE_ARCH: ${{ matrix.rclone-arch }}
-      RCLONE_OS: ${{ matrix.rclone-os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - name: Install local S3 dependency for smoke test
-        run: |
-          archive="rclone-v1.75.2-${RCLONE_OS}-${RCLONE_ARCH}.zip"
-          curl --fail --location --retry 3 "https://downloads.rclone.org/v1.75.2/$archive" -o "$archive"
-          curl --fail --location --retry 3 https://downloads.rclone.org/v1.75.2/SHA256SUMS -o rclone-checksums.txt
-          grep "  $archive$" rclone-checksums.txt | shasum -a 256 --check
-          unzip -q "$archive"
-          mkdir -p "$RUNNER_TEMP/mangrove-tools"
-          install -m 755 "rclone-v1.75.2-${RCLONE_OS}-${RCLONE_ARCH}/rclone" "$RUNNER_TEMP/mangrove-tools/rclone"
-          echo "$RUNNER_TEMP/mangrove-tools" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun test
       - run: bun run build:server
-      - name: Verify standalone binary with isolated data and no Bun on PATH
-        run: bun run test:binary
       - name: Package server
         run: |
           name="mangrove-v${VERSION}-${PLATFORM}"

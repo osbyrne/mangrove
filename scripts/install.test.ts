@@ -8,7 +8,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(
 const installer = resolve(import.meta.dir, "../apps/web/public/install.sh");
 const payload = "#!/bin/sh\nprintf '0.1.0\\n'\n";
 
-async function fixture(options: { missingRclone?: boolean; checksumFailure?: boolean; downloadFailure?: boolean; arch?: "x64" | "arm64"; legacyArchive?: boolean; os?: "linux" | "darwin" } = {}) {
+async function fixture(options: { checksumFailure?: boolean; downloadFailure?: boolean; arch?: "x64" | "arm64"; legacyArchive?: boolean; os?: "linux" | "darwin" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "mangrove-installer-test-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const tools = join(root, "tools");
@@ -23,7 +23,7 @@ async function fixture(options: { missingRclone?: boolean; checksumFailure?: boo
   expect(await tar.exited).toBe(0);
   const sha = new Bun.CryptoHasher("sha256").update(await Bun.file(join(root, "server.tar.gz")).arrayBuffer()).digest("hex");
   await writeFile(join(root, "SHA256SUMS.txt"), `${options.checksumFailure ? "0".repeat(64) : sha}  ./${name}.tar.gz\n`);
-  for (const command of ["tar", "gzip", "awk", "mktemp", "cp", "chmod", "mv", "mkdir", "grep", "rm", "shasum", "unzip"]) {
+  for (const command of ["tar", "gzip", "awk", "mktemp", "cp", "chmod", "mv", "mkdir", "grep", "rm", "shasum"]) {
     const path = Bun.which(command);
     if (!path) throw new Error(`Missing installer test tool: ${command}`);
     await symlink(path, join(tools, command));
@@ -36,16 +36,6 @@ async function fixture(options: { missingRclone?: boolean; checksumFailure?: boo
   await script("uname", 'case "$1" in -s) printf "%s\\n" "${TEST_OS:-Linux}" ;; -m) printf "%s\\n" "$TEST_ARCH" ;; esac');
   await script("sw_vers", 'printf "%s\\n" "${TEST_MACOS_VERSION:-13.0}"');
   await script("sysctl", 'printf "%s\\n" "${TEST_APPLE_SILICON:-0}"');
-  if (!options.missingRclone) await script("rclone", 'printf "rclone v1.75.2\\n"');
-  else {
-    const directory = `rclone-v1.75.2-${os === "darwin" ? "osx" : "linux"}-${arch === "x64" ? "amd64" : "arm64"}`;
-    await mkdir(join(root, directory));
-    await writeFile(join(root, directory, "rclone"), "#!/bin/sh\nprintf 'rclone v1.75.2\\n'\n");
-    const zip = Bun.spawn(["zip", "-q", join(root, "rclone.zip"), `${directory}/rclone`], { cwd: root });
-    expect(await zip.exited).toBe(0);
-    const hash = new Bun.CryptoHasher("sha256").update(await Bun.file(join(root, "rclone.zip")).arrayBuffer()).digest("hex");
-    await writeFile(join(root, "rclone-checksums.txt"), `${hash}  ${directory}.zip\n`);
-  }
   await script("curl", `
 [ "\${TEST_DOWNLOAD_FAILURE:-}" != yes ] || exit 22
 url=; output=
@@ -60,8 +50,6 @@ case "$url" in
   */releases/latest) printf 'https://github.com/osbyrne/mangrove/releases/tag/v0.1.0' ;;
   https://github.com/*/SHA256SUMS.txt) cp "$TEST_FIXTURE/SHA256SUMS.txt" "$output" ;;
   https://github.com/*/*.tar.gz) cp "$TEST_FIXTURE/server.tar.gz" "$output" ;;
-  https://downloads.rclone.org/*/SHA256SUMS) cp "$TEST_FIXTURE/rclone-checksums.txt" "$output" ;;
-  https://downloads.rclone.org/*/*.zip) cp "$TEST_FIXTURE/rclone.zip" "$output" ;;
   *) exit 22 ;;
 esac`);
   const run = async (args: string[] = [], overrides: Record<string, string> = {}) => {
@@ -82,12 +70,6 @@ test.each([
   const result = await run();
   expect(result.code).toBe(0);
   expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
-  expect(await Bun.file(join(bin, "rclone")).exists()).toBe(false);
-});
-test("installs a checksummed rclone dependency when missing and accepts a pinned version", async () => {
-  const { bin, run } = await fixture({ missingRclone: true });
-  expect((await run(["--version", "0.1.0"])).code).toBe(0);
-  expect(await Bun.file(join(bin, "rclone")).text()).toContain("rclone v1.75.2");
 });
 test("a checksum failure preserves an existing installation", async () => {
   const { bin, run } = await fixture({ checksumFailure: true });
@@ -116,13 +98,8 @@ test("legacy release archives are installed under the mangrove command", async (
   expect(await Bun.file(join(bin, "mangrove-server")).exists()).toBe(false);
 });
 
-test.each(["x64", "arm64"] as const)("installs the matching macOS %s rclone dependency", async arch => {
-  const { bin, run } = await fixture({ os: "darwin", arch, missingRclone: true });
-  expect((await run()).code).toBe(0);
-  expect(await Bun.file(join(bin, "rclone")).text()).toContain("rclone v1.75.2");
-});
 test("prefers Apple Silicon binaries under Rosetta", async () => {
-  const { bin, run } = await fixture({ os: "darwin", arch: "arm64", missingRclone: true });
+  const { bin, run } = await fixture({ os: "darwin", arch: "arm64" });
   expect((await run([], { TEST_ARCH: "x86_64", TEST_APPLE_SILICON: "1" })).code).toBe(0);
   expect(await Bun.file(join(bin, "mangrove")).text()).toBe(payload);
 });

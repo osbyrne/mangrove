@@ -42,15 +42,15 @@ main() {
       --help)
         printf '%s\n' 'Usage: sh install.sh [--version v0.1.2] [--bin-dir /absolute/path]' \
           'Defaults: latest stable release, $HOME/.local/bin. macOS 13+ and Linux glibc, x64/ARM64.' \
-          'Installs rclone 1.75.2 if rclone 1.65+ is unavailable. Requires curl, tar, a SHA-256 tool, and unzip when installing rclone.'
+          'Requires curl, tar, and a SHA-256 tool.'
         return ;;
       *) fail "Unknown argument: $1" ;;
     esac
   done
   case "$(uname -s)" in
-    Linux) os=linux; rclone_os=linux ;;
+    Linux) os=linux ;;
     Darwin)
-      os=darwin; rclone_os=osx
+      os=darwin
       mac_version=$(sw_vers -productVersion)
       mac_major=${mac_version%%.*}
       case "$mac_major" in ''|*[!0-9]*) fail 'Cannot determine the macOS version' ;; esac
@@ -59,25 +59,19 @@ main() {
     *) fail 'Supported systems: macOS and Linux' ;;
   esac
   case "$(uname -m)" in
-    x86_64|amd64) arch=x64; rclone_arch=amd64 ;;
-    aarch64|arm64) arch=arm64; rclone_arch=arm64 ;;
+    x86_64|amd64) arch=x64 ;;
+    aarch64|arm64) arch=arm64 ;;
     *) fail 'Supported architectures: x64 and ARM64' ;;
   esac
   # Prefer native Apple Silicon binaries when the shell is running under Rosetta.
   if [ "$os" = darwin ] && command -v sysctl >/dev/null 2>&1 && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
-    arch=arm64; rclone_arch=arm64
+    arch=arm64
   fi
   case "$bin_dir" in /*) ;; *) fail 'The install directory must be an absolute path' ;; esac
   for tool in curl tar awk mktemp cp chmod mv mkdir grep uname rm; do command -v "$tool" >/dev/null 2>&1 || fail "Install $tool first"; done
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail 'Install sha256sum or shasum first'
   if [ "$os" = linux ] && command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
     fail 'Alpine/musl is not supported; use a glibc Linux distribution'
-  fi
-  need_rclone=true
-  if command -v rclone >/dev/null 2>&1 && rclone version 2>/dev/null | awk 'NR == 1 {sub(/^v/, "", $2); split($2, v, "."); ok=(v[1]>1 || (v[1]==1 && v[2]>=65))} END {exit !ok}'; then
-    need_rclone=false
-  else
-    command -v unzip >/dev/null 2>&1 || fail 'Install unzip (or rclone 1.65+) first'
   fi
   if [ -z "$tag" ]; then
     latest=$(download --output /dev/null --write-out '%{url_effective}' https://github.com/osbyrne/mangrove/releases/latest)
@@ -104,18 +98,9 @@ main() {
   fi
   tar -xzf "$work_dir/$name.tar.gz" -C "$work_dir" "$server_entry"
   [ -f "$work_dir/$server_entry" ] && [ ! -L "$work_dir/$server_entry" ] || fail 'The archive contains no regular server executable'
-  if [ "$need_rclone" = true ]; then
-    zip="rclone-v1.75.2-${rclone_os}-${rclone_arch}.zip"
-    download "https://downloads.rclone.org/v1.75.2/$zip" --output "$work_dir/$zip"
-    download https://downloads.rclone.org/v1.75.2/SHA256SUMS --output "$work_dir/rclone-checksums.txt"
-    verify "$zip" "$work_dir/rclone-checksums.txt"
-    unzip -p "$work_dir/$zip" "rclone-v1.75.2-${rclone_os}-${rclone_arch}/rclone" > "$work_dir/rclone"
-    [ -s "$work_dir/rclone" ] || fail 'The rclone archive is empty'
-  fi
   mkdir -p "$bin_dir"
   [ -w "$bin_dir" ] || fail "Cannot write to $bin_dir; choose --bin-dir or run with suitable permissions"
   # Verify every download before replacing any installed executable.
-  if [ "$need_rclone" = true ]; then install_binary "$work_dir/rclone" rclone; fi
   install_binary "$work_dir/$server_entry" mangrove
   printf 'Installed Mangrove %s to %s/mangrove\n' "$tag" "$bin_dir"
   printf 'Add the install directory to PATH, then start the server:\n  export PATH="%s:$PATH"\n  mangrove\n' "$bin_dir"

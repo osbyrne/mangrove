@@ -6,7 +6,7 @@ import type { Track } from "@mangrove/shared";
 
 export type StoredTrack = Track & { objectKey: string };
 
-/** Only song metadata lives here; audio is stored in the private S3 bucket. */
+/** Only song metadata lives here; audio files live in the private local songs directory. */
 export class SongLibrary {
   private readonly db: Database;
   constructor(path = resolve(dataDir, "catalog.sqlite")) {

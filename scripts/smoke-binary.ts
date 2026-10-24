@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { projectRoot } from "../apps/api/src/paths";
 import { version } from "../package.json";
 
 const binary = resolve(Bun.argv[2] ?? join(projectRoot, "dist/mangrove"));
-const rclone = Bun.which("rclone");
-if (!rclone) throw new Error("Install rclone to smoke-test the binary");
 const root = await mkdtemp(join(tmpdir(), "mangrove-binary-"));
 const tools = join(root, "tools");
 await mkdir(tools);
-await symlink(rclone, join(tools, "rclone"));
 function freePort() {
   const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   const port = listener.port;
@@ -19,9 +16,7 @@ function freePort() {
   return port;
 }
 const port = freePort();
-let storagePort = freePort();
-while (storagePort === port) storagePort = freePort();
-const env = { ...process.env, PATH: tools, HOST: "127.0.0.1", PORT: String(port), S3_PORT: String(storagePort), MANGROVE_DATA_DIR: join(root, "data") };
+const env = { ...process.env, PATH: tools, HOST: "127.0.0.1", PORT: String(port), MANGROVE_DATA_DIR: join(root, "data") };
 const origin = `http://127.0.0.1:${port}`;
 function spawnBinary() { return Bun.spawn([binary], { cwd: root, env, stdout: "pipe", stderr: "pipe" }); }
 let child: ReturnType<typeof spawnBinary> | undefined;
@@ -78,7 +73,7 @@ try {
   const partial = await fetch(`${origin}${track.streamUrl}`, { headers: { Range: "bytes=4-15" } });
   assert.equal(partial.status, 206);
   assert.deepEqual(new Uint8Array(await partial.arrayBuffer()), wav.slice(4, 16));
-  for (const path of ["/.data/rclone.conf", "/.data/catalog.sqlite", "/scripts/server.ts"]) {
+  for (const path of ["/.data/catalog.sqlite", "/scripts/server.ts"]) {
     assert.equal((await fetch(`${origin}${path}`)).status, 404, path);
   }
   await stop();
@@ -87,7 +82,7 @@ try {
   assert.equal(catalog.tracks[0]?.streamUrl, track.streamUrl, "Catalog did not survive restart");
   const persisted = await fetch(`${origin}${track.streamUrl}`);
   assert.deepEqual(new Uint8Array(await persisted.arrayBuffer()), wav);
-  console.log("Binary verified without Bun or source files: version, embedded frontend/assets, S3 upload, full/range streaming, private paths, shutdown and restart persistence.");
+  console.log("Binary verified without Bun or source files: version, embedded frontend/assets, local upload, full/range streaming, private paths, shutdown and restart persistence.");
 } catch (error) {
   if (child && child.exitCode === null) child.kill("SIGTERM");
   if (logs) console.error((await logs).join("\n"));

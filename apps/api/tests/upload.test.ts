@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
@@ -13,38 +13,27 @@ const cleanups: Array<() => unknown | Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const wav = new Uint8Array([82,73,70,70,36,0,0,0,87,65,86,69,100,97,116,97]);
 
-async function setup(failPut = false, allowedOrigins: readonly string[] = []) {
+async function setup(failWrite = false, allowedOrigins: readonly string[] = []) {
   const root = await mkdtemp(join(tmpdir(), "mangrove-library-test-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const path = join(root, "catalog.sqlite");
   const library = new SongLibrary(path);
   cleanups.push(() => library.close());
-  const objects = new Map<string, Uint8Array>();
-  const s3 = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const key = new URL(request.url).pathname;
-    if (key === "/music/" || key === "/music") return new Response(null);
-    if (request.method === "PUT") {
-      if (failPut) return new Response("private error", { status: 500 });
-      objects.set(key, new Uint8Array(await request.arrayBuffer()));
-      return new Response(null);
-    }
-    const body = objects.get(key);
-    if (!body) return new Response(null, { status: 404 });
-    return new Response(request.method === "HEAD" ? null : new Uint8Array(body).buffer, { headers: { "Content-Length": String(body.length) } });
-  } });
-  cleanups.push(() => s3.stop(true));
-  const app = createApp({ library, allowedOrigins, storageLayer: makeStorageLayer({ endpoint: s3.url.origin, accessKeyId: "test", secretAccessKey: "test" }) });
+  const songsDir = join(root, "songs");
+  if (failWrite) await writeFile(songsDir, "not a directory");
+  else await mkdir(songsDir, { mode: 0o700 });
+  const app = createApp({ library, allowedOrigins, storageLayer: makeStorageLayer(songsDir) });
   cleanups.push(app.dispose);
   const http = createHttpServer(app.handleRequest);
   await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
   cleanups.push(async () => { http.closeAllConnections(); await new Promise<void>(resolve => http.close(() => resolve())); });
   const address = http.address();
   if (!address || typeof address === "string") throw new Error("No HTTP port");
-  return { library, path, app, objects, origin: `http://127.0.0.1:${address.port}` };
+  return { library, path, app, songsDir, origin: `http://127.0.0.1:${address.port}` };
 }
 
-test("an empty library is healthy; an HTTP upload persists in S3 and the catalog and streams back", async () => {
-  const { origin, path, objects } = await setup();
+test("an empty library is healthy; an HTTP upload persists locally and streams back", async () => {
+  const { origin, path, songsDir } = await setup();
   expect((await fetch(`${origin}/api/health`)).status).toBe(200);
   expect(await (await fetch(`${origin}/api/tracks`)).json()).toEqual({ tracks: [] });
   const response = await fetch(`${origin}/api/tracks?filename=My%20song.wav`, {
@@ -54,7 +43,7 @@ test("an empty library is healthy; an HTTP upload persists in S3 and the catalog
   const { track } = await response.json() as { track: { id: string; title: string; streamUrl: string; objectKey?: string } };
   expect(track.title).toBe("My song");
   expect(track.objectKey).toBeUndefined();
-  expect(objects.size).toBe(1);
+  expect(await Bun.file(join(songsDir, `${track.id}.wav`)).exists()).toBe(true);
   const reopened = new SongLibrary(path);
   try { expect(reopened.list()[0]?.id).toBe(track.id); } finally { reopened.close(); }
   const streamed = await fetch(`${origin}${track.streamUrl}`);
@@ -63,7 +52,7 @@ test("an empty library is healthy; an HTTP upload persists in S3 and the catalog
 });
 
 test("rejects cross-origin, oversized, empty, traversal and disguised uploads without publishing songs", async () => {
-  const { origin, app, library, objects } = await setup();
+  const { origin, app, library, songsDir } = await setup();
   for (const [filename, body, headers, expected] of [
     ["song.wav", wav, { Origin: "https://untrusted.example" }, 403],
     ["song.wav", wav, { "Content-Length": String(maxUploadBytes + 1) }, 413],
@@ -76,10 +65,10 @@ test("rejects cross-origin, oversized, empty, traversal and disguised uploads wi
     expect(response.status).toBe(expected);
   }
   expect(library.list()).toEqual([]);
-  expect(objects.size).toBe(0);
+  expect(await readdir(songsDir)).toEqual([]);
 });
 
-test("a failed S3 write never publishes a catalog entry or leaks the storage error", async () => {
+test("a failed local file write never publishes a catalog entry or leaks the storage error", async () => {
   const { origin, library } = await setup(true);
   const response = await fetch(`${origin}/api/tracks?filename=song.wav`, { method: "POST", body: wav });
   expect(response.status).toBe(503);

@@ -1,7 +1,7 @@
 # Frontend releases
 
 The frontend is a static Cloudflare Worker at https://mangrove.osbyrne.workers.dev.
-The API and encrypted audio stay on air, reachable only over Tailscale at
+The API and private audio stay on air, reachable only over Tailscale at
 https://air.tailca045f.ts.net:8443. Users need Tailscale connected and may need
 to allow local network access in their browser.
 
