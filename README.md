@@ -67,7 +67,7 @@ Then open **http://127.0.0.1:5173**. This starts only the frontend proxy. See **
 ## Server releases
 
 ```sh
-curl -fsSL https://mangrove-web.osbyrne.workers.dev/install.sh | sh
+curl -fsSL https://mangrove.osbyrne.workers.dev/install.sh | sh
 ```
 
 The installer verifies the latest stable macOS or Linux release and installs the `mangrove` command to `~/.local/bin`, adding rclone if needed. Follow its PATH instruction, then run `mangrove`. Service configuration and song data are preserved.

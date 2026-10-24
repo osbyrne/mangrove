@@ -3,7 +3,7 @@ import * as stylex from "@stylexjs/stylex";
 import { styles } from "../styles";
 
 export function InstallServer() {
-  const origin = window.location.protocol === "https:" ? window.location.origin : "https://mangrove-web.osbyrne.workers.dev";
+  const origin = window.location.protocol === "https:" ? window.location.origin : "https://mangrove.osbyrne.workers.dev";
   const command = `curl -fsSL ${origin}/install.sh | sh`;
   const [copyStatus, setCopyStatus] = createSignal("");
   async function copy() {

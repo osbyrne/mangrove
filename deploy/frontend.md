@@ -1,6 +1,6 @@
 # Frontend releases
 
-The frontend is a static Cloudflare Worker at https://mangrove-web.osbyrne.workers.dev.
+The frontend is a static Cloudflare Worker at https://mangrove.osbyrne.workers.dev.
 The API and encrypted audio stay on air, reachable only over Tailscale at
 https://air.tailca045f.ts.net:8443. Users need Tailscale connected and may need
 to allow local network access in their browser.
@@ -36,7 +36,7 @@ Omitting it retains same-origin API requests for the existing local/server app.
 `MANGROVE_API_URL` continues to configure only Vite's development proxy.
 
 On air, `/etc/mangrove.env` contains
-`MANGROVE_WEB_ORIGINS=https://mangrove-web.osbyrne.workers.dev`.
+`MANGROVE_WEB_ORIGINS=https://mangrove.osbyrne.workers.dev`.
 The API allows cross-origin reads, range requests and uploads only for exact
 configured HTTPS origins (comma-separated). There is no wildcard or credentialed
 CORS. Other cross-site uploads remain rejected. Tailscale remains the access boundary.

@@ -3,7 +3,7 @@
 Install the latest stable release from the frontend:
 
 ```sh
-curl -fsSL https://mangrove-web.osbyrne.workers.dev/install.sh | sh
+curl -fsSL https://mangrove.osbyrne.workers.dev/install.sh | sh
 ```
 
 The installed command is `mangrove`. It also supports older release archives and installs them under this name.
@@ -11,7 +11,7 @@ The installed command is `mangrove`. It also supports older release archives and
 The installer detects macOS or Linux and x64/ARM64, verifies SHA-256 checksums, and installs to `~/.local/bin` without sudo. It also installs rclone 1.75.2 there if rclone 1.65+ is missing (requires unzip). Follow its printed PATH instruction. It leaves service configuration and song data unchanged. To pin a version or choose another directory:
 
 ```sh
-curl -fsSL https://mangrove-web.osbyrne.workers.dev/install.sh | sh -s -- --version v0.1.2 --bin-dir /absolute/path/bin
+curl -fsSL https://mangrove.osbyrne.workers.dev/install.sh | sh -s -- --version v0.1.2 --bin-dir /absolute/path/bin
 ```
 
 You can inspect `/install.sh` first. `MANGROVE_VERSION` and `MANGROVE_INSTALL_DIR` are equivalent environment overrides. macOS requires version 13 or later. Alpine/musl is currently unsupported.
